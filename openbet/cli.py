@@ -15,6 +15,7 @@ from openbet.database.repositories import (
 )
 from openbet.kalshi.client import KalshiClient
 from openbet.kalshi.exceptions import KalshiError
+from openbet.kalshi.models import Market
 
 console = Console()
 
@@ -209,6 +210,199 @@ def add_market(market_id: str):
         sys.exit(1)
     except Exception as e:
         console.print(f"[red]✗ Error: {str(e)}[/red]")
+        sys.exit(1)
+
+
+@cli.command("list-markets")
+@click.option("--status", help="Filter by status (e.g., 'active', 'closed')")
+def list_markets(status: Optional[str]):
+    """List all markets tracked in the database.
+
+    Args:
+        status: Optional filter by market status
+    """
+    try:
+        console.print("[bold]Fetching markets from database...[/bold]")
+
+        market_repo = MarketRepository()
+        markets = market_repo.get_all()
+
+        # Filter by status if provided
+        if status:
+            markets = [m for m in markets if m.get('status') == status]
+
+        if not markets:
+            console.print("[yellow]No markets found in database[/yellow]")
+            return
+
+        console.print(f"\n[bold cyan]Found {len(markets)} market(s)[/bold cyan]\n")
+
+        # Display markets in a table
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Ticker", style="cyan", width=30)
+        table.add_column("Title", style="white", width=40)
+        table.add_column("Status", style="green")
+        table.add_column("Close Time", style="yellow", width=20)
+
+        for market in markets:
+            table.add_row(
+                market['id'],
+                market['title'][:37] + "..." if len(market['title']) > 40 else market['title'],
+                market['status'] or "N/A",
+                str(market['close_time'])[:19] if market['close_time'] else "N/A",
+            )
+
+        console.print(table)
+        console.print(f"\n[green]✓[/green] Listed {len(markets)} market(s)")
+
+    except Exception as e:
+        console.print(f"[red]✗ Error: {str(e)}[/red]")
+        sys.exit(1)
+
+
+@cli.command("find-markets")
+@click.argument("event_ticker")
+@click.option("--add-all", is_flag=True, help="Add all found markets to database")
+def find_markets(event_ticker: str, add_all: bool):
+    """Find all markets for a given event/series ticker from Kalshi API.
+
+    Args:
+        event_ticker: Event/series ticker (e.g., KXFOXNEWSMENTION-26FEB04)
+        add_all: If True, add all found markets to database
+    """
+    try:
+        console.print(f"[bold]Searching for markets in series: {event_ticker}...[/bold]")
+
+        # Initialize Kalshi client
+        client = KalshiClient()
+
+        # Convert to uppercase for API call
+        event_ticker_upper = event_ticker.upper()
+
+        # Query API for markets in this series
+        params = {
+            'event_ticker': event_ticker_upper,
+            'limit': 50
+        }
+        data = client._make_request('GET', '/markets', params=params)
+        markets = data.get('markets', [])
+
+        if not markets:
+            console.print(f"[yellow]No markets found for event ticker: {event_ticker}[/yellow]")
+            return
+
+        console.print(f"\n[bold cyan]Found {len(markets)} market(s) in series {event_ticker_upper}[/bold cyan]\n")
+
+        # Display event title once at the top
+        if markets:
+            console.print(f"[dim]Event: {markets[0].get('title', 'N/A')}[/dim]\n")
+
+        # Display markets in a table
+        table = Table(show_header=True, header_style="bold magenta", show_lines=False)
+        table.add_column("#", style="dim", width=2)
+        table.add_column("Ticker", style="cyan", width=33)
+        table.add_column("Option", style="white", width=18, no_wrap=False)
+        table.add_column("Y-Bid", style="green", width=6)
+        table.add_column("Y-Ask", style="yellow", width=6)
+        table.add_column("N-Bid", style="green", width=6)
+        table.add_column("N-Ask", style="yellow", width=6)
+        table.add_column("Last", style="cyan", width=6)
+        table.add_column("Vol", style="blue", width=7)
+        table.add_column("OI", style="blue", width=7)
+
+        for idx, market in enumerate(markets, 1):
+            # Extract option name from yes_sub_title or ticker suffix
+            option_name = market.get('yes_sub_title') or market.get('subtitle') or market['ticker'].split('-')[-1]
+
+            # Get current prices if available
+            yes_bid = "N/A"
+            yes_ask = "N/A"
+            no_bid = "N/A"
+            no_ask = "N/A"
+            try:
+                orderbook_data = client._make_request('GET', f"/markets/{market['ticker']}/orderbook", params={'depth': 1})
+                orderbook = orderbook_data.get('orderbook', {})
+
+                yes_data = orderbook.get('yes', [])
+                if yes_data and len(yes_data) > 0:
+                    yes_ask = f"${yes_data[0][0] / 100:.2f}"
+
+                no_data = orderbook.get('no', [])
+                if no_data and len(no_data) > 0:
+                    no_ask = f"${no_data[0][0] / 100:.2f}"
+            except:
+                pass
+
+            # Get market data
+            last_price = market.get('last_price')
+            last_price_str = f"${last_price:.2f}" if last_price else "N/A"
+
+            volume = market.get('volume', 0)
+            volume_str = f"{volume:,}" if volume else "0"
+
+            open_interest = market.get('open_interest', 0)
+            oi_str = f"{open_interest:,}" if open_interest else "0"
+
+            table.add_row(
+                str(idx),
+                market['ticker'],
+                option_name,
+                yes_bid,
+                yes_ask,
+                no_bid,
+                no_ask,
+                last_price_str,
+                volume_str,
+                oi_str,
+            )
+
+        console.print(table)
+
+        # If add_all flag is set, add all markets to database
+        if add_all:
+            console.print(f"\n[bold]Adding {len(markets)} markets to database...[/bold]")
+            market_repo = MarketRepository()
+            added_count = 0
+            skipped_count = 0
+
+            for market in markets:
+                if market_repo.exists(market['ticker']):
+                    skipped_count += 1
+                    continue
+
+                try:
+                    market_obj = Market(**market)
+                    market_repo.create(
+                        market_id=market_obj.ticker,
+                        title=market_obj.title,
+                        close_time=str(market_obj.close_time) if market_obj.close_time else None,
+                        status=market_obj.status,
+                        category=market_obj.category,
+                        min_tick_size=0.01,
+                        max_tick_size=0.99,
+                        metadata={
+                            "subtitle": market_obj.subtitle,
+                            "yes_sub_title": market_obj.yes_sub_title,
+                            "no_sub_title": market_obj.no_sub_title,
+                            "volume": market_obj.volume,
+                            "open_interest": market_obj.open_interest,
+                        },
+                    )
+                    added_count += 1
+                except Exception as e:
+                    console.print(f"[yellow]⚠ Failed to add {market['ticker']}: {str(e)}[/yellow]")
+
+            console.print(f"\n[green]✓[/green] Added {added_count} markets, skipped {skipped_count} (already in database)")
+
+        console.print(f"\n[green]✓[/green] Search complete")
+
+    except KalshiError as e:
+        console.print(f"[red]✗ Kalshi API error: {str(e)}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]✗ Error: {str(e)}[/red]")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 

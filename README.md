@@ -67,35 +67,68 @@ LOG_FILE=openbet.log
 ### Check Market Details
 Display information about a specific market:
 ```bash
-openbet check-market <market_id>
+python -m openbet.cli check-market <market_id>
+```
+
+Example:
+```bash
+python -m openbet.cli check-market KXFOXNEWSMENTION-26FEB04-TRUM
 ```
 
 ### Add Market to Database
 Track a market for analysis and betting:
 ```bash
-openbet add-market <market_id>
+python -m openbet.cli add-market <market_id>
+```
+
+### List Markets in Database
+View all markets currently tracked in the database:
+```bash
+python -m openbet.cli list-markets
+
+# Filter by status
+python -m openbet.cli list-markets --status active
+```
+
+### Find Markets by Series/Event Ticker
+Discover all markets within a specific event or series:
+```bash
+# Find all markets in a series
+python -m openbet.cli find-markets <event_ticker>
+
+# Find and add all markets to database
+python -m openbet.cli find-markets <event_ticker> --add-all
+```
+
+Example:
+```bash
+# Find all markets for the Fox News mention event
+python -m openbet.cli find-markets kxfoxnewsmention-26feb04
+
+# Add all markets from that series to database
+python -m openbet.cli find-markets kxfoxnewsmention-26feb04 --add-all
 ```
 
 ### Run Analysis
 Analyze one or all markets using multiple LLM providers:
 ```bash
 # Analyze a specific market
-openbet analyze --market-id <market_id>
+python -m openbet.cli analyze --market-id <market_id>
 
 # Analyze all tracked markets
-openbet analyze --all
+python -m openbet.cli analyze --all
 
 # Analyze specific option within a market
-openbet analyze --market-id <market_id> --option <option_name>
+python -m openbet.cli analyze --market-id <market_id> --option <option_name>
 ```
 
 ### Place a Bet
 Execute a bet based on stored analysis:
 ```bash
-openbet place-bet <market_id> --option <option_name> --side <yes|no> --quantity <amount>
+python -m openbet.cli place-bet <market_id> --option <option_name> --side <yes|no> --quantity <amount>
 
 # Show analysis before placing bet
-openbet place-bet <market_id> --option <option_name> --side yes --quantity 10 --use-analysis
+python -m openbet.cli place-bet <market_id> --option <option_name> --side yes --quantity 10 --use-analysis
 ```
 
 ## Architecture

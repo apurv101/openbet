@@ -251,31 +251,19 @@ class KalshiClient:
         no_bids = []
         no_asks = []
 
-        if yes_data and isinstance(yes_data, list) and len(yes_data) >= 2:
-            # yes_data[0] is bids, yes_data[1] is asks
-            if yes_data[0]:
-                yes_bids = [
-                    {"price": item[0] / 100, "quantity": item[1]}
-                    for item in yes_data[0] if item and len(item) >= 2
-                ]
-            if yes_data[1]:
-                yes_asks = [
-                    {"price": item[0] / 100, "quantity": item[1]}
-                    for item in yes_data[1] if item and len(item) >= 2
-                ]
+        # The API returns a simple list of [price_cents, quantity] pairs
+        # These are asks (offers to sell) - prices at which you can buy
+        if yes_data and isinstance(yes_data, list):
+            yes_asks = [
+                {"price": item[0] / 100, "quantity": item[1]}
+                for item in yes_data if isinstance(item, list) and len(item) >= 2
+            ]
 
-        if no_data and isinstance(no_data, list) and len(no_data) >= 2:
-            # no_data[0] is bids, no_data[1] is asks
-            if no_data[0]:
-                no_bids = [
-                    {"price": item[0] / 100, "quantity": item[1]}
-                    for item in no_data[0] if item and len(item) >= 2
-                ]
-            if no_data[1]:
-                no_asks = [
-                    {"price": item[0] / 100, "quantity": item[1]}
-                    for item in no_data[1] if item and len(item) >= 2
-                ]
+        if no_data and isinstance(no_data, list):
+            no_asks = [
+                {"price": item[0] / 100, "quantity": item[1]}
+                for item in no_data if isinstance(item, list) and len(item) >= 2
+            ]
 
         return Orderbook(
             yes_bids=yes_bids,
