@@ -286,3 +286,252 @@ class AnalysisRepository:
             """
         )
         return [dict(row) for row in cursor.fetchall()]
+
+
+class TradingSignalRepository:
+    """Repository for trading signal operations."""
+
+    def __init__(self, db=None):
+        """Initialize repository with database connection."""
+        self.db = db or get_db()
+
+    def create(
+        self,
+        market_id: str,
+        option: str,
+        signal_type: str,
+        consensus_yes_prob: float,
+        consensus_no_prob: float,
+        market_yes_prob: float,
+        market_no_prob: float,
+        divergence_yes: float,
+        divergence_no: float,
+        divergence_magnitude: float,
+        recommended_action: str,
+        recommended_quantity: int,
+        recommended_price: float,
+        expected_profit: float,
+        selected_side: Optional[str] = None,
+        volume_24h: Optional[float] = None,
+        liquidity_depth: Optional[float] = None,
+        open_interest: Optional[int] = None,
+        analysis_id: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """Create a new trading signal and return its ID."""
+        metadata_json = json.dumps(metadata) if metadata else None
+
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO trading_signals (
+                market_id, option, signal_type,
+                consensus_yes_prob, consensus_no_prob,
+                market_yes_prob, market_no_prob,
+                divergence_yes, divergence_no, selected_side,
+                divergence_magnitude,
+                recommended_action, recommended_quantity,
+                recommended_price, expected_profit,
+                volume_24h, liquidity_depth, open_interest,
+                analysis_id, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                market_id,
+                option,
+                signal_type,
+                consensus_yes_prob,
+                consensus_no_prob,
+                market_yes_prob,
+                market_no_prob,
+                divergence_yes,
+                divergence_no,
+                selected_side,
+                divergence_magnitude,
+                recommended_action,
+                recommended_quantity,
+                recommended_price,
+                expected_profit,
+                volume_24h,
+                liquidity_depth,
+                open_interest,
+                analysis_id,
+                metadata_json,
+            ),
+        )
+        self.db.conn.commit()
+        return cursor.lastrowid
+
+    def get_by_market(
+        self, market_id: str, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Get trading signals for a market."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM trading_signals
+            WHERE market_id = ?
+            ORDER BY signal_timestamp DESC
+            LIMIT ?
+            """,
+            (market_id, limit),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_recent(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get recent trading signals."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM trading_signals
+            ORDER BY signal_timestamp DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_by_type(
+        self, signal_type: str, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Get signals by type (entry or exit)."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM trading_signals
+            WHERE signal_type = ?
+            ORDER BY signal_timestamp DESC
+            LIMIT ?
+            """,
+            (signal_type, limit),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+class TradeDecisionRepository:
+    """Repository for trade decision operations."""
+
+    def __init__(self, db=None):
+        """Initialize repository with database connection."""
+        self.db = db or get_db()
+
+    def create(
+        self,
+        signal_id: int,
+        decision: str,
+        user_notes: Optional[str] = None,
+        executed: bool = False,
+        execution_timestamp: Optional[str] = None,
+        order_id: Optional[str] = None,
+        actual_quantity: Optional[int] = None,
+        actual_price: Optional[float] = None,
+        execution_cost: Optional[float] = None,
+        position_id: Optional[int] = None,
+        realized_pnl: Optional[float] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """Create a new trade decision and return its ID."""
+        metadata_json = json.dumps(metadata) if metadata else None
+
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO trade_decisions (
+                signal_id, decision, user_notes,
+                executed, execution_timestamp, order_id,
+                actual_quantity, actual_price, execution_cost,
+                position_id, realized_pnl, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                signal_id,
+                decision,
+                user_notes,
+                executed,
+                execution_timestamp,
+                order_id,
+                actual_quantity,
+                actual_price,
+                execution_cost,
+                position_id,
+                realized_pnl,
+                metadata_json,
+            ),
+        )
+        self.db.conn.commit()
+        return cursor.lastrowid
+
+    def get_by_signal(self, signal_id: int) -> Optional[Dict[str, Any]]:
+        """Get decision for a specific signal."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM trade_decisions
+            WHERE signal_id = ?
+            ORDER BY decision_timestamp DESC
+            LIMIT 1
+            """,
+            (signal_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_execution_history(
+        self, limit: int = 20, decision_filter: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Get trade execution history."""
+        cursor = self.db.conn.cursor()
+
+        if decision_filter:
+            cursor.execute(
+                """
+                SELECT * FROM trade_decisions
+                WHERE decision = ?
+                ORDER BY decision_timestamp DESC
+                LIMIT ?
+                """,
+                (decision_filter, limit),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT * FROM trade_decisions
+                ORDER BY decision_timestamp DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_with_signals(
+        self, limit: int = 20, signal_type: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Get decisions with their corresponding signals."""
+        cursor = self.db.conn.cursor()
+
+        if signal_type:
+            cursor.execute(
+                """
+                SELECT d.*, s.*
+                FROM trade_decisions d
+                JOIN trading_signals s ON d.signal_id = s.id
+                WHERE s.signal_type = ?
+                ORDER BY d.decision_timestamp DESC
+                LIMIT ?
+                """,
+                (signal_type, limit),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT d.*, s.*
+                FROM trade_decisions d
+                JOIN trading_signals s ON d.signal_id = s.id
+                ORDER BY d.decision_timestamp DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+
+        return [dict(row) for row in cursor.fetchall()]

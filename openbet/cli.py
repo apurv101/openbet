@@ -688,5 +688,403 @@ def place_bet(
         sys.exit(1)
 
 
+@cli.command("scan-opportunities")
+@click.option("--market-id", help="Scan specific market (default: all tracked)")
+@click.option("--threshold", type=float, default=0.05, help="Minimum divergence threshold (default: 0.05)")
+@click.option("--limit", type=int, default=10, help="Max opportunities to show (default: 10)")
+@click.option("--force", is_flag=True, help="Force fresh analysis bypassing cache")
+def scan_opportunities(market_id: Optional[str], threshold: float, limit: int, force: bool):
+    """Scan for trading opportunities based on consensus vs market divergence."""
+    from openbet.trading.strategy import TradingStrategy
+
+    try:
+        console.print(f"[bold]Scanning for opportunities (threshold: {threshold:.1%})...[/bold]\n")
+
+        # Initialize strategy
+        strategy = TradingStrategy(entry_threshold=threshold)
+
+        # Scan for opportunities
+        market_ids = [market_id] if market_id else None
+        opportunities = strategy.scan_for_opportunities(
+            market_ids=market_ids,
+            force_analysis=force,
+        )
+
+        if not opportunities:
+            console.print("[yellow]No opportunities found meeting criteria[/yellow]")
+            return
+
+        # Limit results
+        opportunities = opportunities[:limit]
+
+        # Display opportunities table
+        console.print(f"[bold cyan]Trading Opportunities ({len(opportunities)} found)[/bold cyan]\n")
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Market ID", style="cyan")
+        table.add_column("Side", style="yellow")
+        table.add_column("Divergence", style="green")
+        table.add_column("Consensus", style="white")
+        table.add_column("Market", style="white")
+        table.add_column("Qty", style="blue")
+        table.add_column("Price", style="white")
+        table.add_column("Expected $", style="green")
+        table.add_column("Warnings", style="red")
+
+        for signal in opportunities:
+            side_str = signal.selected_side.upper() if signal.selected_side else "N/A"
+            divergence_str = f"{signal.divergence_magnitude:.1%}"
+
+            if signal.selected_side == "yes":
+                consensus_str = f"{signal.consensus_yes_prob:.1%}"
+                market_str = f"{signal.market_yes_prob:.1%}"
+            else:
+                consensus_str = f"{signal.consensus_no_prob:.1%}"
+                market_str = f"{signal.market_no_prob:.1%}"
+
+            price_str = f"${signal.recommended_price:.2f}"
+            profit_str = f"${signal.expected_profit:.2f}"
+            warnings_str = f"{len(signal.risk_warnings)}" if signal.risk_warnings else "-"
+
+            table.add_row(
+                signal.market_id,
+                side_str,
+                divergence_str,
+                consensus_str,
+                market_str,
+                str(signal.recommended_quantity),
+                price_str,
+                profit_str,
+                warnings_str,
+            )
+
+        console.print(table)
+
+        console.print(f"\n[dim]Use 'recommend-trade <MARKET_ID>' to analyze a specific opportunity[/dim]")
+
+    except Exception as e:
+        console.print(f"[red]✗ Error: {str(e)}[/red]")
+        sys.exit(1)
+
+
+@cli.command("recommend-trade")
+@click.argument("market_id")
+@click.option("--auto-approve", is_flag=True, help="Skip confirmation prompt")
+@click.option("--quantity", type=int, help="Override recommended quantity")
+@click.option("--price", type=float, help="Override recommended price")
+def recommend_trade(market_id: str, auto_approve: bool, quantity: Optional[int], price: Optional[float]):
+    """Analyze market and recommend trade with approval."""
+    from openbet.trading.strategy import TradingStrategy
+
+    try:
+        console.print(f"[bold]Analyzing {market_id}...[/bold]\n")
+
+        # Initialize strategy
+        strategy = TradingStrategy()
+
+        # Generate signal
+        signal = strategy.signal_generator.generate_entry_signal(
+            market_id=market_id,
+            option="yes",
+            force_analysis=False,
+        )
+
+        if not signal:
+            console.print("[yellow]No trading opportunity found for this market[/yellow]")
+            console.print("[dim]The divergence may be below the threshold (5%) or filters failed[/dim]")
+            return
+
+        # Display detailed analysis
+        console.print("[bold cyan]Market Analysis[/bold cyan]\n")
+
+        # Market details table
+        details_table = Table(show_header=True, header_style="bold magenta")
+        details_table.add_column("Metric", style="cyan")
+        details_table.add_column("Value", style="white")
+
+        details_table.add_row("Market ID", signal.market_id)
+        details_table.add_row("Signal Type", signal.signal_type.upper())
+        details_table.add_row("Timestamp", signal.signal_timestamp.strftime("%Y-%m-%d %H:%M:%S"))
+
+        console.print(details_table)
+
+        # Consensus vs Market table
+        console.print("\n[bold cyan]Consensus vs Market[/bold cyan]\n")
+
+        comparison_table = Table(show_header=True, header_style="bold magenta")
+        comparison_table.add_column("Side", style="cyan")
+        comparison_table.add_column("Consensus", style="green")
+        comparison_table.add_column("Market", style="yellow")
+        comparison_table.add_column("Divergence", style="red")
+
+        comparison_table.add_row(
+            "YES",
+            f"{signal.consensus_yes_prob:.1%}",
+            f"{signal.market_yes_prob:.1%}",
+            f"{signal.divergence_yes:.1%}",
+        )
+        comparison_table.add_row(
+            "NO",
+            f"{signal.consensus_no_prob:.1%}",
+            f"{signal.market_no_prob:.1%}",
+            f"{signal.divergence_no:.1%}",
+        )
+
+        console.print(comparison_table)
+
+        # Recommendation
+        console.print("\n[bold cyan]Recommendation[/bold cyan]\n")
+
+        rec_table = Table(show_header=True, header_style="bold magenta")
+        rec_table.add_column("Field", style="cyan")
+        rec_table.add_column("Value", style="white")
+
+        rec_table.add_row("Action", signal.recommended_action.upper())
+        rec_table.add_row("Side", signal.selected_side.upper() if signal.selected_side else "N/A")
+        rec_table.add_row("Quantity", str(quantity or signal.recommended_quantity))
+        rec_table.add_row("Price", f"${price or signal.recommended_price:.2f}")
+        rec_table.add_row("Expected Profit", f"${signal.expected_profit:.2f}")
+        rec_table.add_row("Divergence", f"{signal.divergence_magnitude:.1%}")
+
+        console.print(rec_table)
+
+        # Risk warnings
+        if signal.risk_warnings:
+            console.print("\n[bold yellow]Risk Warnings[/bold yellow]")
+            for warning in signal.risk_warnings:
+                console.print(f"  [yellow]⚠[/yellow]  {warning}")
+
+        if not signal.passed_filters:
+            console.print("\n[red]✗ Signal did not pass risk filters[/red]")
+            if not click.confirm("\nProceed anyway?"):
+                console.print("[yellow]Trade cancelled[/yellow]")
+                return
+
+        # Confirm with user
+        if not auto_approve:
+            console.print()
+            if not click.confirm("Proceed with trade?"):
+                console.print("[yellow]Trade cancelled[/yellow]")
+                # Record rejection
+                strategy.execute_signal(signal, user_approved=False, user_notes="User rejected")
+                return
+
+        # Execute trade
+        console.print("\n[bold]Executing trade...[/bold]")
+
+        decision = strategy.execute_signal(
+            signal=signal,
+            user_approved=True,
+            custom_quantity=quantity,
+            custom_price=price,
+        )
+
+        if decision.executed:
+            console.print("[green]✓ Trade executed successfully![/green]")
+            console.print(f"Order ID: {decision.order_id}")
+            console.print(f"Quantity: {decision.actual_quantity}")
+            console.print(f"Price: ${decision.actual_price:.2f}")
+            console.print(f"Cost: ${decision.execution_cost:.2f}")
+        else:
+            console.print(f"[red]✗ Trade execution failed[/red]")
+            if decision.user_notes:
+                console.print(f"[dim]{decision.user_notes}[/dim]")
+
+    except Exception as e:
+        console.print(f"[red]✗ Error: {str(e)}[/red]")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+@cli.command("monitor-exits")
+@click.option("--auto-sell", is_flag=True, help="Auto-execute exits meeting criteria")
+@click.option("--threshold", type=float, default=0.01, help="Convergence threshold (default: 0.01)")
+def monitor_exits(auto_sell: bool, threshold: float):
+    """Monitor open positions for exit opportunities."""
+    from openbet.trading.strategy import TradingStrategy
+
+    try:
+        console.print(f"[bold]Monitoring positions for exits (threshold: {threshold:.1%})...[/bold]\n")
+
+        # Initialize strategy
+        strategy = TradingStrategy(exit_threshold=threshold)
+
+        # Get exit signals
+        exit_signals = strategy.monitor_exits(force_analysis=False)
+
+        if not exit_signals:
+            console.print("[yellow]No positions ready to exit[/yellow]")
+            return
+
+        # Display exit opportunities
+        console.print(f"[bold cyan]Exit Opportunities ({len(exit_signals)} positions)[/bold cyan]\n")
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Market ID", style="cyan")
+        table.add_column("Side", style="yellow")
+        table.add_column("Quantity", style="blue")
+        table.add_column("Current Price", style="white")
+        table.add_column("Consensus", style="green")
+        table.add_column("Divergence", style="white")
+        table.add_column("Expected P&L", style="green")
+
+        for signal in exit_signals:
+            side_str = signal.selected_side.upper() if signal.selected_side else "N/A"
+
+            if signal.selected_side == "yes":
+                current_price = signal.market_yes_prob
+                consensus = signal.consensus_yes_prob
+            else:
+                current_price = signal.market_no_prob
+                consensus = signal.consensus_no_prob
+
+            profit_style = "green" if signal.expected_profit > 0 else "red"
+
+            table.add_row(
+                signal.market_id,
+                side_str,
+                str(signal.recommended_quantity),
+                f"${current_price:.2f}",
+                f"{consensus:.1%}",
+                f"{signal.divergence_magnitude:.1%}",
+                f"[{profit_style}]${signal.expected_profit:.2f}[/{profit_style}]",
+            )
+
+        console.print(table)
+
+        # Execute exits if auto-sell is enabled
+        if auto_sell:
+            console.print("\n[bold]Auto-sell enabled - executing exits...[/bold]")
+            for signal in exit_signals:
+                console.print(f"\nExiting {signal.market_id}...")
+                decision = strategy.execute_signal(signal, user_approved=True)
+                if decision.executed:
+                    console.print(f"[green]✓ Exited successfully. P&L: ${decision.realized_pnl:.2f}[/green]")
+                else:
+                    console.print(f"[red]✗ Exit failed[/red]")
+        else:
+            # Prompt for each exit
+            for signal in exit_signals:
+                console.print(f"\n[bold]Exit {signal.market_id}?[/bold]")
+                console.print(f"Expected P&L: ${signal.expected_profit:.2f}")
+
+                if click.confirm("Proceed with exit?"):
+                    decision = strategy.execute_signal(signal, user_approved=True)
+                    if decision.executed:
+                        console.print(f"[green]✓ Exited successfully. P&L: ${decision.realized_pnl:.2f}[/green]")
+                    else:
+                        console.print(f"[red]✗ Exit failed[/red]")
+                else:
+                    console.print("[yellow]Exit skipped[/yellow]")
+                    strategy.execute_signal(signal, user_approved=False, user_notes="User skipped exit")
+
+    except Exception as e:
+        console.print(f"[red]✗ Error: {str(e)}[/red]")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+@cli.command("trading-history")
+@click.option("--limit", type=int, default=20, help="Number of records to display (default: 20)")
+@click.option("--signal-type", type=click.Choice(["entry", "exit", "all"]), default="all", help="Filter by signal type")
+@click.option("--decision", type=click.Choice(["approved", "rejected", "ignored", "all"]), default="all", help="Filter by decision")
+def trading_history(limit: int, signal_type: str, decision: str):
+    """Display trading signal history and performance statistics."""
+    from openbet.trading.strategy import TradingStrategy
+
+    try:
+        console.print("[bold]Trading History[/bold]\n")
+
+        # Initialize strategy
+        strategy = TradingStrategy()
+
+        # Get signal history
+        signal_filter = None if signal_type == "all" else signal_type
+        signals = strategy.get_signal_history(limit=limit, signal_type=signal_filter)
+
+        # Get decision history
+        decision_filter = None if decision == "all" else decision
+        decisions_dict = {}
+
+        # Build decisions lookup
+        all_decisions = strategy.get_decision_history(limit=1000)
+        for dec in all_decisions:
+            decisions_dict[dec.get("signal_id")] = dec
+
+        # Display signals with decisions
+        console.print(f"[bold cyan]Recent Signals ({len(signals)})[/bold cyan]\n")
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Time", style="cyan")
+        table.add_column("Market", style="white")
+        table.add_column("Type", style="yellow")
+        table.add_column("Side", style="blue")
+        table.add_column("Divergence", style="green")
+        table.add_column("Qty", style="white")
+        table.add_column("Decision", style="white")
+        table.add_column("Executed", style="white")
+
+        for sig in signals:
+            sig_id = sig.get("id")
+            dec = decisions_dict.get(sig_id)
+
+            timestamp = sig.get("signal_timestamp", "N/A")
+            if isinstance(timestamp, str) and "T" in timestamp:
+                timestamp = timestamp.split("T")[0] + " " + timestamp.split("T")[1].split(".")[0]
+
+            decision_str = dec.get("decision", "pending") if dec else "pending"
+            executed_str = "✓" if dec and dec.get("executed") else "-"
+
+            if decision_filter and decision_str != decision_filter:
+                continue
+
+            table.add_row(
+                str(timestamp)[:19],
+                sig.get("market_id", "N/A")[:20],
+                sig.get("signal_type", "N/A"),
+                (sig.get("selected_side") or "N/A").upper(),
+                f"{sig.get('divergence_magnitude', 0.0):.1%}",
+                str(sig.get("recommended_quantity", 0)),
+                decision_str,
+                executed_str,
+            )
+
+        console.print(table)
+
+        # Display performance statistics
+        console.print("\n[bold cyan]Performance Statistics[/bold cyan]\n")
+
+        stats = strategy.get_performance_stats()
+
+        stats_table = Table(show_header=True, header_style="bold magenta")
+        stats_table.add_column("Metric", style="cyan")
+        stats_table.add_column("Value", style="white")
+
+        stats_table.add_row("Total Signals", str(stats["total_signals"]))
+        stats_table.add_row("Total Decisions", str(stats["total_decisions"]))
+        stats_table.add_row("Approved", str(stats["approved"]))
+        stats_table.add_row("Rejected", str(stats["rejected"]))
+        stats_table.add_row("Approval Rate", f"{stats['approval_rate']:.1%}")
+        stats_table.add_row("Executed Trades", str(stats["executed"]))
+        stats_table.add_row("Total Closed Trades", str(stats["total_trades"]))
+        stats_table.add_row("Wins", str(stats["wins"]))
+        stats_table.add_row("Losses", str(stats["losses"]))
+        stats_table.add_row("Win Rate", f"{stats['win_rate']:.1%}")
+
+        pnl_style = "green" if stats["total_pnl"] >= 0 else "red"
+        stats_table.add_row("Total P&L", f"[{pnl_style}]${stats['total_pnl']:.2f}[/{pnl_style}]")
+        stats_table.add_row("Avg P&L per Trade", f"${stats['avg_pnl_per_trade']:.2f}")
+
+        console.print(stats_table)
+
+    except Exception as e:
+        console.print(f"[red]✗ Error: {str(e)}[/red]")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     cli()
