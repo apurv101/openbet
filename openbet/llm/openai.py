@@ -46,11 +46,20 @@ class OpenAIProvider(BaseLLMProvider):
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
-                max_tokens=1024,
+                max_completion_tokens=1024,
             )
 
             # Extract response text
-            response_text = response.choices[0].message.content
+            message = response.choices[0].message
+
+            # Check for refusal
+            if hasattr(message, 'refusal') and message.refusal:
+                raise Exception(f"OpenAI refused to respond: {message.refusal}")
+
+            response_text = message.content
+
+            if not response_text:
+                raise Exception(f"OpenAI returned empty response. Full response: {response}")
 
             # Parse JSON response
             data = json.loads(response_text)
