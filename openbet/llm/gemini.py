@@ -51,8 +51,28 @@ class GeminiProvider(BaseLLMProvider):
                 contents=prompt
             )
 
+            # Check if response was blocked by safety filters
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                if hasattr(response.prompt_feedback, 'block_reason'):
+                    raise Exception(f"Gemini blocked response due to safety filters: {response.prompt_feedback.block_reason}")
+
+            # Check if we have candidates
+            if not hasattr(response, 'candidates') or not response.candidates:
+                raise Exception(f"Gemini returned no candidates. Response: {response}")
+
+            # Check if first candidate was blocked
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'finish_reason') and candidate.finish_reason:
+                # Check for safety or other blocks
+                if 'SAFETY' in str(candidate.finish_reason):
+                    raise Exception(f"Gemini candidate blocked by safety: {candidate.finish_reason}")
+
             # Extract response text
             response_text = response.text
+
+            # Debug: Check if response is empty
+            if not response_text or not response_text.strip():
+                raise Exception(f"Gemini returned empty response. Full response object: {response}")
 
             # Parse JSON response
             # Try to extract JSON from markdown code blocks if present
@@ -64,6 +84,10 @@ class GeminiProvider(BaseLLMProvider):
                 json_start = response_text.find("```") + 3
                 json_end = response_text.find("```", json_start)
                 response_text = response_text[json_start:json_end].strip()
+
+            # Debug: Log what we're trying to parse
+            if not response_text.strip():
+                raise Exception(f"Response text became empty after markdown extraction. Original: {response.text[:200]}")
 
             data = json.loads(response_text)
 

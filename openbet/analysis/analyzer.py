@@ -174,10 +174,27 @@ class Analyzer:
         responses = await self.llm_manager.analyze_with_all_providers(context)
 
         # Calculate consensus
-        consensus = calculate_consensus(responses, method=self.consensus_method)
+        consensus = await calculate_consensus(
+            responses,
+            method=self.consensus_method,
+            llm_manager=self.llm_manager,
+            context=context
+        )
 
         # Store results in database
         option_key = option or market_id
+
+        # Prepare metadata for iterative reasoning
+        metadata = None
+        if consensus.method == "iterative_reasoning":
+            metadata = {
+                "iterative_rounds": {
+                    "round_1": consensus.round_1_responses,
+                    "round_2": consensus.provider_responses,
+                    "convergence_metrics": consensus.convergence_metrics,
+                    "rounds_completed": consensus.rounds_completed
+                }
+            }
 
         analysis_id = self.analysis_repo.create(
             market_id=market_id,
@@ -212,10 +229,11 @@ class Analyzer:
             consensus_no_confidence=consensus.no_confidence,
             consensus_method=consensus.method,
             previous_analysis_id=previous_analysis_id,
+            metadata=metadata,
         )
 
         # Return analysis result
-        return {
+        result = {
             "analysis_id": analysis_id,
             "market_id": market_id,
             "option": option_key,
@@ -232,6 +250,14 @@ class Analyzer:
             "consensus_method": consensus.method,
             "provider_count": consensus.provider_count,
         }
+
+        # Add iterative reasoning fields if applicable
+        if consensus.method == "iterative_reasoning":
+            result["rounds_completed"] = consensus.rounds_completed
+            result["round_1_responses"] = consensus.round_1_responses
+            result["convergence_metrics"] = consensus.convergence_metrics
+
+        return result
 
     def analyze_all_markets(self) -> List[Dict]:
         """Analyze all markets in database.

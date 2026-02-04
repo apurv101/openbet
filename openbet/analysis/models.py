@@ -14,6 +14,11 @@ class ConsensusResult(BaseModel):
     provider_count: int
     provider_responses: Dict[str, Optional[Dict[str, Any]]]
 
+    # Fields for iterative reasoning
+    rounds_completed: Optional[int] = None
+    round_1_responses: Optional[Dict[str, Any]] = None
+    convergence_metrics: Optional[Dict[str, Any]] = None
+
 
 class AnalysisResult(BaseModel):
     """Complete analysis result for a market."""

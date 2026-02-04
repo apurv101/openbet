@@ -8,6 +8,7 @@ Openbet is a Python CLI application that helps analyze betting markets on Kalshi
 
 ## Features
 
+- **Market Screening**: Pre-filter markets by liquidity, volume, and open interest to identify quality trading opportunities before spending token money
 - **Market Tracking**: Add and monitor Kalshi markets in a local SQLite database
 - **Multi-LLM Analysis**: Get betting insights from Claude, OpenAI, Grok, and Gemini simultaneously
 - **Consensus Scoring**: Combine multiple LLM opinions into actionable confidence scores
@@ -131,6 +132,131 @@ python -m openbet.cli find-markets kxfoxnewsmention-26feb04
 python -m openbet.cli find-markets kxfoxnewsmention-26feb04 --add-all
 ```
 
+### Screen Markets (Pre-Filter Before Analysis)
+Filter markets by liquidity, volume, and open interest to identify which markets are worth spending token money on for LLM analysis. This helps you avoid wasting API costs on low-quality or illiquid markets.
+
+#### Basic Usage
+```bash
+# Screen top 50 markets with default thresholds
+python -m openbet.cli screen-markets
+
+# Screen markets in a specific series
+python -m openbet.cli screen-markets --event-ticker KXTRUMPMEET-26FEB
+
+# Screen tracked markets from database
+python -m openbet.cli screen-markets --tracked
+
+# Show only markets that pass all filters
+python -m openbet.cli screen-markets --passed-only
+```
+
+#### Custom Thresholds
+```bash
+# Set custom thresholds for high-quality markets
+python -m openbet.cli screen-markets \
+  --min-liquidity 500000 \
+  --min-volume 200 \
+  --min-open-interest 500 \
+  --passed-only
+
+# Lower thresholds for more permissive filtering
+python -m openbet.cli screen-markets \
+  --min-liquidity 50 \
+  --min-volume 10 \
+  --min-open-interest 50
+```
+
+#### Sorting Options
+```bash
+# Sort by liquidity (highest first)
+python -m openbet.cli screen-markets --sort-by liquidity
+
+# Sort by quality score (default - composite metric)
+python -m openbet.cli screen-markets --sort-by quality
+
+# Sort by 24h volume
+python -m openbet.cli screen-markets --sort-by volume
+
+# Sort by open interest
+python -m openbet.cli screen-markets --sort-by open-interest
+
+# Sort by close time (soonest first)
+python -m openbet.cli screen-markets --sort-by close-time
+```
+
+#### Screening Flags and Options
+
+| Flag/Option | Description | Default |
+|------------|-------------|---------|
+| `--tracked` | Screen only tracked markets from database | False |
+| `--status <status>` | Filter by market status on API (e.g., 'open') | All statuses |
+| `--min-liquidity <amount>` | Minimum liquidity threshold | 100.0 |
+| `--min-volume <amount>` | Minimum 24h volume threshold | 50.0 |
+| `--min-open-interest <amount>` | Minimum open interest threshold | 100 |
+| `--sort-by <field>` | Sort order: quality, liquidity, volume, open-interest, close-time | quality |
+| `--passed-only` | Show only markets that pass all filters | False |
+| `--limit <count>` | Maximum markets to screen | 50 |
+| `--event-ticker <ticker>` | Filter by event/series ticker | None |
+
+#### Understanding the Metrics
+
+**Liquidity** - Total capital available in the market's liquidity pool
+- Higher liquidity = Tighter spreads between YES/NO prices
+- Higher liquidity = Easier to enter/exit positions without moving price
+- Recommended: ≥ $100,000 for serious trading
+
+**Volume (24h)** - Number of contracts traded in last 24 hours
+- Indicates recent market activity and interest
+- Low volume may mean stale prices or low trader confidence
+- Recommended: ≥ 100 contracts for active markets
+
+**Open Interest** - Total number of outstanding contracts
+- Shows total market participation and commitment
+- Higher OI = More established market with trader conviction
+- Recommended: ≥ 500 for meaningful markets
+
+**Quality Score** - Composite metric calculated as:
+```
+quality_score = (liquidity / min_liquidity) × 0.4 +
+                (volume_24h / min_volume) × 0.3 +
+                (open_interest / min_open_interest) × 0.3
+```
+
+#### Example Output
+
+```
+Screening 10 market(s)
+Thresholds: Liquidity ≥ 100, Volume ≥ 50, Open Interest ≥ 100
+
+┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Status ┃ Ticker                     ┃  Liquidity ┃ Volume 24h ┃ Open Int. ┃ Quality┃ Issues               ┃
+┡━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
+│ ✓      │ KXTRUMPMEET-26FEB-JPOW     │    581,550 │        516 │       991 │   5.82 │ —                    │
+│ ✗      │ KXELECTION-2026-HOUSE      │     45,000 │         32 │       150 │   0.83 │ Low liquidity...     │
+│ ✓      │ KXFED-MAR-RATE-CUT         │    920,000 │      2,100 │     1,500 │  18.20 │ —                    │
+└────────┴────────────────────────────┴────────────┴────────────┴───────────┴────────┴──────────────────────┘
+
+Summary
+✓ Passed: 7/10
+✗ Failed: 3/10
+
+Next: Run 'openbet analyze --market-id <TICKER>' for markets that passed
+```
+
+#### Typical Workflow
+
+```bash
+# Step 1: Screen markets to find quality candidates
+python -m openbet.cli screen-markets --event-ticker KXTRUMPMEET-26FEB --passed-only
+
+# Step 2: Analyze only the markets that passed screening
+python -m openbet.cli analyze --market-id KXTRUMPMEET-26FEB-JPOW
+
+# Or for series analysis with pre-screening
+python -m openbet.cli screen-markets --event-ticker KXELECTION --passed-only
+python -m openbet.cli analyze-series KXELECTION --add-markets
+```
+
 ### Run Analysis
 Analyze one or all markets using multiple LLM providers (Claude, OpenAI, Grok, Gemini). The analyzer automatically adds markets to the database if they don't exist.
 
@@ -155,6 +281,7 @@ python -m openbet.cli analyze --market-id <market_id> --option <option_name>
 | `--option <name>` | Specific option within market to analyze | None |
 | `--force` | Force fresh analysis, bypass cache | False |
 | `--cache-hours <hours>` | Cache validity duration in hours | 24 |
+| `--consensus-method <method>` | Consensus calculation method: `simple_average`, `weighted_average`, or `iterative_reasoning` | `simple_average` |
 
 #### Caching Behavior
 
@@ -221,6 +348,62 @@ python -m openbet.cli analyze --market-id NEW-MARKET-TICKER
 # Market not in database, fetching from Kalshi...
 # ✓ Fresh analysis generated
 ```
+
+### Analyze Markets in a Series
+
+Discover and analyze all markets within a specific event or series in one command:
+
+```bash
+# Find and analyze all markets in a series
+python -m openbet.cli analyze-series <event_ticker>
+
+# Force fresh analysis for all markets
+python -m openbet.cli analyze-series kxtrumpmeet-26feb --force
+
+# Auto-add markets to database before analysis
+python -m openbet.cli analyze-series kxtrumpmeet-26feb --add-markets
+
+# Custom cache duration
+python -m openbet.cli analyze-series kxtrumpmeet-26feb --cache-hours 12
+```
+
+**Example:**
+```bash
+# Analyze all markets in the Trump meeting series
+python -m openbet.cli analyze-series kxtrumpmeet-26feb
+
+# Output:
+# Finding markets in series: kxtrumpmeet-26feb...
+#
+# Found 20 market(s) in series KXTRUMPMEET-26FEB
+#
+# Analyzing 20 markets...
+#
+# 1/20 Analyzing KXTRUMPMEET-26FEB-T100 (100+ appearances)...
+# ✓ Fresh analysis generated
+# [Analysis results table...]
+#
+# 2/20 Analyzing KXTRUMPMEET-26FEB-T75 (75-99 appearances)...
+# ℹ Using cached analysis from 2026-02-03 10:30:45
+# [Analysis results table...]
+# ...
+#
+# Analysis Complete
+# ✓ Successfully analyzed: 20/20
+```
+
+**Options:**
+
+| Flag/Option | Description | Default |
+|------------|-------------|---------|
+| `--force` | Force fresh analysis for all markets, bypass cache | False |
+| `--cache-hours <hours>` | Cache validity duration in hours | 24 |
+| `--add-markets` | Add all found markets to database before analysis | False |
+
+**Use Cases:**
+- Quickly analyze an entire event series at once
+- Refresh analysis for all markets in a series with `--force`
+- Discover and analyze new markets without manual add-market commands
 
 ### Place a Bet
 Execute a bet based on stored analysis:
@@ -344,6 +527,12 @@ python -m openbet.cli recommend-trade KXPRESPERSON-28-MRUB --quantity 20
 
 # Override recommended price
 python -m openbet.cli recommend-trade KXPRESPERSON-28-MRUB --price 0.07
+
+# Force fresh analysis (bypass cache)
+python -m openbet.cli recommend-trade KXPRESPERSON-28-MRUB --force
+
+# Custom cache duration
+python -m openbet.cli recommend-trade KXPRESPERSON-28-MRUB --cache-hours 12
 ```
 
 **Output Example:**
@@ -399,9 +588,11 @@ Cost: $1.44
 | `--auto-approve` | Boolean | False | Skip confirmation prompt, execute immediately |
 | `--quantity` | Integer | Calculated | Override recommended position size |
 | `--price` | Float | Market price | Override recommended limit price |
+| `--force` | Boolean | False | Force fresh analysis, bypass cache |
+| `--cache-hours` | Integer | 24 | Cache validity duration in hours |
 
 **Workflow:**
-1. Fetches AI consensus (cached if fresh)
+1. Fetches AI consensus (uses 24-hour cache by default, unless `--force` specified)
 2. Gets current market orderbook
 3. Calculates divergence and determines trade direction
 4. Sizes position proportionally to divergence
@@ -689,8 +880,149 @@ Tracks user decisions on trading signals with:
 The analysis system:
 1. Builds comprehensive context (market details, prices, position, historical analysis, metrics)
 2. Calls all configured LLM providers in parallel
-3. Calculates consensus using simple average of confidence scores
+3. Calculates consensus using one of three available methods (simple average, weighted average, or iterative reasoning)
 4. Stores results with full context for future reference
+
+### Consensus Methods
+
+Openbet supports three different consensus calculation methods to combine multiple LLM predictions:
+
+#### 1. Simple Average (Default)
+
+Calculates the arithmetic mean of confidence scores from all providers.
+
+```bash
+python -m openbet.cli analyze --market-id KXMARKET-ID --consensus-method simple_average
+```
+
+**When to use**: Fast, straightforward analysis. Good for quick decisions and high-frequency analysis.
+
+**Performance**:
+- Latency: ~5-10 seconds (1 round of LLM calls)
+- Cost: Standard (4 provider calls)
+
+#### 2. Weighted Average
+
+Applies custom weights to each provider based on historical performance or preference.
+
+```bash
+python -m openbet.cli analyze --market-id KXMARKET-ID --consensus-method weighted_average
+```
+
+**When to use**: When you want to trust certain providers more than others based on track record.
+
+**Performance**: Same as simple average (single round)
+
+#### 3. Iterative Reasoning (NEW)
+
+**Advanced two-round analysis** where LLMs see anonymized peer reasoning and revise their predictions.
+
+```bash
+python -m openbet.cli analyze --market-id KXMARKET-ID --consensus-method iterative_reasoning
+```
+
+**How it works**:
+
+**Round 1 - Initial Analysis**:
+- All 4 LLMs (Claude, OpenAI, Grok, Gemini) analyze the market independently
+- Each provides YES/NO confidence scores + detailed reasoning
+- Results and reasoning are stored
+
+**Round 2 - Peer Review & Revision**:
+- Each LLM receives:
+  - Anonymized peer analyses (as "Analyst A", "Analyst B", etc.)
+  - Their own previous response for continuity
+- Providers can revise their confidence based on peer insights
+- **Anonymization reduces bias** - LLMs don't know which provider said what
+
+**Final Consensus**:
+- Calculate average from Round 2 revised confidence scores
+- Track convergence metrics (how much each provider changed)
+
+**Example Output**:
+
+```
+Analyzing market KXPRESPERSON-28-JVAN...
+
+✓ Fresh analysis generated
+
+Round 1: Initial Analyses
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓
+┃ Provider ┃ YES Confidence ┃ NO Confidence ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ Claude   │ 70.0%          │ 30.0%         │
+│ Openai   │ 65.0%          │ 35.0%         │
+│ Grok     │ 80.0%          │ 20.0%         │
+│ Gemini   │ 72.0%          │ 28.0%         │
+└──────────┴────────────────┴───────────────┘
+
+Round 2: Revised Analyses (after peer review)
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳────────┓
+┃ Provider ┃ YES Confidence ┃ NO Confidence ┃ Change ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇────────┩
+│ Claude   │ 75.0%          │ 25.0%         │ +5.0%  │
+│ Openai   │ 68.0%          │ 32.0%         │ +3.0%  │
+│ Grok     │ 77.0%          │ 23.0%         │ -3.0%  │
+│ Gemini   │ 74.0%          │ 26.0%         │ +2.0%  │
+├──────────┼────────────────┼───────────────┼────────┤
+│ CONSENSUS│ 73.5%          │ 26.5%         │        │
+└──────────┴────────────────┴───────────────┴────────┘
+
+Convergence: Average shift 3.25%, Max shift 5.0%
+
+✓ Analysis complete
+```
+
+**When to use**:
+- High-stakes decisions where accuracy is critical
+- Markets where reasoning quality matters more than speed
+- When you want to capture "wisdom of crowds" effect
+- Complex markets that benefit from multiple perspectives
+
+**Benefits**:
+- **Higher accuracy**: LLMs can correct each other's blind spots
+- **Transparency**: See how opinions evolved from Round 1 to Round 2
+- **Reduced bias**: Anonymization prevents over-reliance on specific providers
+- **Convergence insights**: Track consensus formation dynamics
+
+**Performance**:
+- **Latency**: ~2x simple average (two sequential rounds)
+- **API Costs**: ~2x simple average (double LLM calls)
+- **Token Usage**: Round 2 prompts are 2-3x longer (includes peer reasoning)
+
+**Data Storage**:
+- Both Round 1 and Round 2 responses stored in database metadata
+- Convergence metrics tracked (average shift, max shift)
+- Full audit trail of reasoning evolution
+
+**Use Cases**:
+```bash
+# High-stakes bet analysis
+python -m openbet.cli analyze --market-id KXELECTION-28-PRES --consensus-method iterative_reasoning
+
+# Compare with simple average
+python -m openbet.cli analyze --market-id KXELECTION-28-PRES --consensus-method simple_average
+
+# Force fresh iterative analysis (bypass cache)
+python -m openbet.cli analyze --market-id KXMARKET-ID --consensus-method iterative_reasoning --force
+
+# Iterative reasoning with all markets
+python -m openbet.cli analyze --all --consensus-method iterative_reasoning
+```
+
+**Trading Integration**:
+
+Iterative reasoning works seamlessly with the trading algorithm:
+
+```bash
+# Scan opportunities using iterative reasoning (more accurate signals)
+python -m openbet.cli scan-opportunities --consensus-method iterative_reasoning
+
+# Get trade recommendations with iterative analysis
+python -m openbet.cli recommend-trade KXMARKET-ID --consensus-method iterative_reasoning
+```
+
+Note: The `--consensus-method` flag is currently only available for the `analyze` command. Trading commands (`scan-opportunities`, `recommend-trade`) use the analyzer's default method (simple average).
 
 ## Development
 
@@ -722,10 +1054,12 @@ ruff openbet/
 - ✅ Automated opportunity scanning
 - ✅ Semi-automated trading with approval workflow
 - ✅ Position monitoring and exit signals
+- ✅ **Iterative reasoning consensus** - Multi-round LLM analysis with peer feedback
+- ✅ Multiple consensus methods (simple average, weighted average, iterative reasoning)
 
 ### Future Enhancements
 - Automated heartbeat monitoring for continuous analysis
-- Weighted consensus methods (currently simple average)
+- Consensus method selection in trading commands (`scan-opportunities`, `recommend-trade`)
 - Fully automated mode (no approval required)
 - Advanced backtesting with historical price data
 - Kelly Criterion position sizing
