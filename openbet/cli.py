@@ -56,11 +56,49 @@ def check_market(market_id: str):
 
         table.add_row("Ticker", market.ticker)
         table.add_row("Title", market.title)
+
+        # Add subtitle if available
+        if market.subtitle:
+            table.add_row("Subtitle", market.subtitle)
+
+        # Add YES/NO subtitles if available
+        if market.yes_sub_title:
+            table.add_row("YES means", market.yes_sub_title)
+        if market.no_sub_title:
+            table.add_row("NO means", market.no_sub_title)
+
         table.add_row("Status", market.status or "N/A")
         table.add_row("Category", market.category or "N/A")
+
+        # Add implied probability (chance) from market price
+        if orderbook.yes_mid_price:
+            implied_prob = orderbook.yes_mid_price * 100  # Convert to percentage
+            table.add_row("Implied Chance (YES)", f"{implied_prob:.1f}%")
+
+        # Add last price if available
+        if market.last_price is not None:
+            table.add_row("Last Price", f"${market.last_price:.2f}")
+
         table.add_row("Close Time", str(market.close_time) if market.close_time else "N/A")
+
+        # Add expiration time if different from close time
+        if market.expiration_time and market.expiration_time != market.close_time:
+            table.add_row("Expiration Time", str(market.expiration_time))
+
         table.add_row("Volume (24h)", str(market.volume_24h) if market.volume_24h else "N/A")
         table.add_row("Open Interest", str(market.open_interest) if market.open_interest else "N/A")
+
+        # Add liquidity if available
+        if market.liquidity is not None:
+            table.add_row("Liquidity", str(market.liquidity))
+
+        # Add result if market is resolved
+        if market.result:
+            table.add_row("Result", market.result)
+
+        # Add can_close_early flag
+        if market.can_close_early is not None:
+            table.add_row("Can Close Early", "Yes" if market.can_close_early else "No")
 
         console.print(table)
 
