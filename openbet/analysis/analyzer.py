@@ -1,6 +1,7 @@
 """Main analysis orchestrator."""
 
 import asyncio
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from openbet.analysis.consensus import calculate_consensus
@@ -43,14 +44,56 @@ class Analyzer:
         self.kalshi_client = KalshiClient()
         self.consensus_method = consensus_method
 
+    def _is_analysis_fresh(
+        self, analysis: Optional[Dict], cache_hours: int = 24
+    ) -> bool:
+        """Check if analysis is fresh (within cache_hours).
+
+        Args:
+            analysis: Analysis dictionary with analysis_timestamp
+            cache_hours: Number of hours to consider analysis fresh
+
+        Returns:
+            True if analysis is fresh, False otherwise
+        """
+        if not analysis or "analysis_timestamp" not in analysis:
+            return False
+
+        timestamp_str = analysis["analysis_timestamp"]
+        try:
+            # Parse timestamp - handle different formats
+            if "T" in timestamp_str:
+                analysis_time = datetime.fromisoformat(
+                    timestamp_str.replace("Z", "+00:00")
+                )
+            else:
+                analysis_time = datetime.strptime(
+                    timestamp_str, "%Y-%m-%d %H:%M:%S"
+                )
+
+            # Make timezone-naive for comparison
+            if analysis_time.tzinfo is not None:
+                analysis_time = analysis_time.replace(tzinfo=None)
+
+            age = datetime.utcnow() - analysis_time
+            return age < timedelta(hours=cache_hours)
+        except (ValueError, AttributeError):
+            return False
+
     def analyze_market(
-        self, market_id: str, option: Optional[str] = None
+        self,
+        market_id: str,
+        option: Optional[str] = None,
+        force: bool = False,
+        cache_hours: int = 24,
     ) -> Dict:
         """Analyze a market and store results.
 
         Args:
             market_id: Market ticker to analyze
             option: Specific option to analyze (optional)
+            force: If True, bypass cache and run fresh analysis
+            cache_hours: Number of hours to cache results (default: 24)
 
         Returns:
             Dictionary with analysis results
@@ -59,8 +102,20 @@ class Analyzer:
             ValueError: If market not found
             Exception: If analysis fails
         """
+        # Check for cached analysis unless force=True
+        if not force:
+            latest_analysis = self.analysis_repo.get_latest_by_market(
+                market_id, option
+            )
+            if self._is_analysis_fresh(latest_analysis, cache_hours):
+                # Return cached result with flag indicating it's from cache
+                latest_analysis["from_cache"] = True
+                return latest_analysis
+
         # Use asyncio.run to execute the async method
-        return asyncio.run(self._analyze_market_async(market_id, option))
+        result = asyncio.run(self._analyze_market_async(market_id, option))
+        result["from_cache"] = False
+        return result
 
     async def _analyze_market_async(
         self, market_id: str, option: Optional[str] = None
@@ -74,11 +129,31 @@ class Analyzer:
         Returns:
             Dictionary with analysis results
         """
-        # Validate market exists
+        # Auto-add market if it doesn't exist
         if not self.market_repo.exists(market_id):
-            raise ValueError(
-                f"Market {market_id} not found. Use 'add-market' command first."
-            )
+            # Fetch market from Kalshi and add to database
+            try:
+                kalshi_market = self.kalshi_client.get_market(market_id)
+                self.market_repo.create(
+                    market_id=kalshi_market.ticker,
+                    title=kalshi_market.title,
+                    close_time=str(kalshi_market.close_time) if kalshi_market.close_time else None,
+                    status=kalshi_market.status,
+                    category=kalshi_market.category,
+                    min_tick_size=0.01,
+                    max_tick_size=0.99,
+                    metadata={
+                        "subtitle": kalshi_market.subtitle,
+                        "yes_sub_title": kalshi_market.yes_sub_title,
+                        "no_sub_title": kalshi_market.no_sub_title,
+                        "volume": kalshi_market.volume,
+                        "open_interest": kalshi_market.open_interest,
+                    },
+                )
+            except Exception as e:
+                raise ValueError(
+                    f"Market {market_id} not found on Kalshi: {str(e)}"
+                )
 
         # Build context
         context = self.context_builder.build_context(market_id, option)

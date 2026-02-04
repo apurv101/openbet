@@ -410,11 +410,22 @@ def find_markets(event_ticker: str, add_all: bool):
 @click.option("--market-id", help="Specific market to analyze")
 @click.option("--all", "analyze_all", is_flag=True, help="Analyze all markets in database")
 @click.option("--option", help="Specific option to analyze within market")
-def analyze(market_id: Optional[str], analyze_all: bool, option: Optional[str]):
+@click.option("--force", is_flag=True, help="Force fresh analysis, bypass cache")
+@click.option("--cache-hours", type=int, default=24, help="Cache validity in hours (default: 24)")
+def analyze(
+    market_id: Optional[str],
+    analyze_all: bool,
+    option: Optional[str],
+    force: bool,
+    cache_hours: int,
+):
     """Run LLM analysis on market(s) and store results.
 
-    Calls multiple LLM providers (Claude, OpenAI, Grok) to analyze market options
+    Calls multiple LLM providers (Claude, OpenAI, Grok, Gemini) to analyze market options
     and calculates consensus confidence scores.
+
+    By default, returns cached analysis if less than 24 hours old.
+    Use --force to bypass cache and run fresh analysis.
     """
     try:
         # Import here to avoid circular dependencies
@@ -432,6 +443,8 @@ def analyze(market_id: Optional[str], analyze_all: bool, option: Optional[str]):
 
         if analyze_all:
             console.print("[bold]Analyzing all tracked markets...[/bold]")
+            if force:
+                console.print("[dim]Force mode: bypassing cache for all markets[/dim]")
             # Get all markets from database
             market_repo = MarketRepository()
             markets = market_repo.get_all()
@@ -444,15 +457,28 @@ def analyze(market_id: Optional[str], analyze_all: bool, option: Optional[str]):
 
             for market in markets:
                 console.print(f"[cyan]Analyzing {market['id']}...[/cyan]")
-                result = analyzer.analyze_market(market['id'], option)
+                result = analyzer.analyze_market(
+                    market['id'], option, force=force, cache_hours=cache_hours
+                )
                 _display_analysis_result(result)
                 console.print()
         else:
             console.print(f"[bold]Analyzing market {market_id}...[/bold]")
-            result = analyzer.analyze_market(market_id, option)
+
+            # Check if market exists, show message if it will be auto-added
+            market_repo = MarketRepository()
+            if not market_repo.exists(market_id):
+                console.print(f"[dim]Market not in database, fetching from Kalshi...[/dim]")
+
+            if force:
+                console.print("[dim]Force mode: bypassing cache[/dim]")
+
+            result = analyzer.analyze_market(
+                market_id, option, force=force, cache_hours=cache_hours
+            )
             _display_analysis_result(result)
 
-        console.print("\n[green]✓[/green] Analysis complete and stored in database")
+        console.print("\n[green]✓[/green] Analysis complete")
 
     except Exception as e:
         console.print(f"[red]✗ Error: {str(e)}[/red]")
@@ -463,6 +489,13 @@ def analyze(market_id: Optional[str], analyze_all: bool, option: Optional[str]):
 
 def _display_analysis_result(result: dict):
     """Display analysis result in a formatted table."""
+    # Show cache status if applicable
+    if result.get("from_cache"):
+        timestamp = result.get("analysis_timestamp", "unknown")
+        console.print(f"\n[yellow]ℹ[/yellow] Using cached analysis from {timestamp}")
+    else:
+        console.print("\n[green]✓[/green] Fresh analysis generated")
+
     console.print("\n[bold cyan]Analysis Results[/bold cyan]")
 
     table = Table(show_header=True, header_style="bold magenta")

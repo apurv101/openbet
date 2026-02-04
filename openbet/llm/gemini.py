@@ -3,7 +3,7 @@
 import json
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
 
 from openbet.config import get_settings
 from openbet.llm.base import BaseLLMProvider
@@ -27,8 +27,7 @@ class GeminiProvider(BaseLLMProvider):
         super().__init__(api_key, model)
 
         # Configure the API
-        genai.configure(api_key=self.api_key)
-        self.client = genai.GenerativeModel(self.model)
+        self.client = genai.Client(api_key=self.api_key)
 
     async def analyze_market(self, context: MarketContext) -> LLMAnalysisResponse:
         """Analyze market using Gemini.
@@ -47,7 +46,10 @@ class GeminiProvider(BaseLLMProvider):
         try:
             # Gemini API is synchronous, but we're in an async context
             # We'll call it directly since it's fast enough
-            response = self.client.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt
+            )
 
             # Extract response text
             response_text = response.text

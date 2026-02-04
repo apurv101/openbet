@@ -60,7 +60,29 @@ DATABASE_PATH=data/openbet.db
 # Logging
 LOG_LEVEL=INFO
 LOG_FILE=openbet.log
+
+# LLM Model Configuration (Optional - defaults shown)
+DEFAULT_LLM_MODEL_CLAUDE=claude-3-5-sonnet-20241022
+DEFAULT_LLM_MODEL_OPENAI=gpt-4o
+DEFAULT_LLM_MODEL_GROK=grok-3
+DEFAULT_LLM_MODEL_GEMINI=gemini-1.5-flash
 ```
+
+### LLM Model Configuration
+
+You can customize which models are used for each provider. Current recommended models:
+
+| Provider | Model | Notes |
+|----------|-------|-------|
+| **Claude (Anthropic)** | `claude-3-5-sonnet-20241022` | Best balance of performance/cost |
+| | `claude-opus-4-5-20251101` | Most capable (requires credits) |
+| **OpenAI** | `gpt-4o` | Latest GPT-4 Optimized |
+| | `o1` | For complex reasoning tasks |
+| **Grok (XAI)** | `grok-3` | Latest Grok model |
+| **Gemini (Google)** | `gemini-1.5-flash` | Fast and efficient |
+| | `gemini-1.5-pro` | More capable |
+
+> **Note**: Make sure you have sufficient API credits for your chosen providers. The analyzer will skip providers that fail and use available ones for consensus.
 
 ## Usage
 
@@ -110,9 +132,11 @@ python -m openbet.cli find-markets kxfoxnewsmention-26feb04 --add-all
 ```
 
 ### Run Analysis
-Analyze one or all markets using multiple LLM providers:
+Analyze one or all markets using multiple LLM providers (Claude, OpenAI, Grok, Gemini). The analyzer automatically adds markets to the database if they don't exist.
+
+#### Basic Usage
 ```bash
-# Analyze a specific market
+# Analyze a specific market (auto-adds to database if needed)
 python -m openbet.cli analyze --market-id <market_id>
 
 # Analyze all tracked markets
@@ -120,6 +144,82 @@ python -m openbet.cli analyze --all
 
 # Analyze specific option within a market
 python -m openbet.cli analyze --market-id <market_id> --option <option_name>
+```
+
+#### Analysis Flags and Options
+
+| Flag/Option | Description | Default |
+|------------|-------------|---------|
+| `--market-id <id>` | Specific market ticker to analyze | None |
+| `--all` | Analyze all markets in database | False |
+| `--option <name>` | Specific option within market to analyze | None |
+| `--force` | Force fresh analysis, bypass cache | False |
+| `--cache-hours <hours>` | Cache validity duration in hours | 24 |
+
+#### Caching Behavior
+
+By default, the analyze command uses **intelligent caching** to save API costs and improve speed:
+
+- **First analysis**: Calls all LLM providers → saves to database → returns results
+- **Within cache period** (default 24 hours): Returns cached results instantly
+- **After cache expiry**: Runs fresh LLM analysis → updates database
+- **Force mode** (`--force`): Always runs fresh analysis regardless of cache age
+
+```bash
+# Use cached results if available (within 24 hours)
+python -m openbet.cli analyze --market-id KXPRESPERSON-28-JVAN
+
+# Force fresh analysis, bypass cache
+python -m openbet.cli analyze --market-id KXPRESPERSON-28-JVAN --force
+
+# Custom cache duration (12 hours instead of 24)
+python -m openbet.cli analyze --market-id KXPRESPERSON-28-JVAN --cache-hours 12
+
+# Analyze all markets with caching
+python -m openbet.cli analyze --all
+
+# Force fresh analysis for all markets
+python -m openbet.cli analyze --all --force
+```
+
+#### Example Output
+
+When you run analysis, you'll see:
+- ✅ Cache status (cached vs fresh analysis)
+- 📊 Individual confidence scores from each LLM provider
+- 🎯 Consensus confidence scores (YES/NO)
+- ⏱️ Analysis timestamp
+
+```
+Analyzing market KXPRESPERSON-28-JVAN...
+
+✓ Fresh analysis generated
+
+Analysis Results
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
+┃ Provider ┃ YES Confidence ┃ NO Confidence  ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
+│ Claude   │ 65.0%          │ 35.0%          │
+│ Openai   │ 62.5%          │ 37.5%          │
+│ Grok     │ 68.0%          │ 32.0%          │
+│ Gemini   │ 64.5%          │ 35.5%          │
+│ CONSENSUS│ 65.0%          │ 35.0%          │
+└──────────┴────────────────┴────────────────┘
+
+✓ Analysis complete
+```
+
+#### Auto-Add Markets
+
+The analyze command automatically fetches and adds markets to the database if they don't exist:
+```bash
+# No need to run add-market first - just analyze directly
+python -m openbet.cli analyze --market-id NEW-MARKET-TICKER
+
+# Output:
+# Analyzing market NEW-MARKET-TICKER...
+# Market not in database, fetching from Kalshi...
+# ✓ Fresh analysis generated
 ```
 
 ### Place a Bet
