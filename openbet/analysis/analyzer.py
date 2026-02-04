@@ -21,7 +21,6 @@ class Analyzer:
         use_openai: bool = True,
         use_grok: bool = True,
         use_gemini: bool = True,
-        consensus_method: str = "simple_average",
     ):
         """Initialize analyzer.
 
@@ -30,7 +29,6 @@ class Analyzer:
             use_openai: Enable OpenAI provider
             use_grok: Enable Grok provider
             use_gemini: Enable Gemini provider
-            consensus_method: Method for calculating consensus
         """
         self.context_builder = ContextBuilder()
         self.llm_manager = LLMManager(
@@ -42,7 +40,6 @@ class Analyzer:
         self.analysis_repo = AnalysisRepository()
         self.market_repo = MarketRepository()
         self.kalshi_client = KalshiClient()
-        self.consensus_method = consensus_method
 
     def _is_analysis_fresh(
         self, analysis: Optional[Dict], cache_hours: int = 24
@@ -173,10 +170,9 @@ class Analyzer:
         # Call all LLM providers
         responses = await self.llm_manager.analyze_with_all_providers(context)
 
-        # Calculate consensus
+        # Calculate consensus using iterative reasoning
         consensus = await calculate_consensus(
             responses,
-            method=self.consensus_method,
             llm_manager=self.llm_manager,
             context=context
         )

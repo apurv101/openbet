@@ -81,4 +81,4 @@ class RiskConfig(BaseModel):
     min_volume_24h: float = 50.0
     max_position_size: int = 100
     max_spread: float = 0.10  # 10% max bid-ask spread
-    allowed_statuses: List[str] = Field(default_factory=lambda: ["open"])
+    allowed_statuses: List[str] = Field(default_factory=lambda: ["open", "active"])

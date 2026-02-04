@@ -179,7 +179,7 @@ class AnalysisRepository:
         liquidity_depth: Optional[float] = None,
         consensus_yes_confidence: Optional[float] = None,
         consensus_no_confidence: Optional[float] = None,
-        consensus_method: str = "simple_average",
+        consensus_method: str = "iterative_reasoning",
         previous_analysis_id: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> int:

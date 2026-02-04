@@ -281,7 +281,6 @@ python -m openbet.cli analyze --market-id <market_id> --option <option_name>
 | `--option <name>` | Specific option within market to analyze | None |
 | `--force` | Force fresh analysis, bypass cache | False |
 | `--cache-hours <hours>` | Cache validity duration in hours | 24 |
-| `--consensus-method <method>` | Consensus calculation method: `simple_average`, `weighted_average`, or `iterative_reasoning` | `simple_average` |
 
 #### Caching Behavior
 
@@ -880,45 +879,15 @@ Tracks user decisions on trading signals with:
 The analysis system:
 1. Builds comprehensive context (market details, prices, position, historical analysis, metrics)
 2. Calls all configured LLM providers in parallel
-3. Calculates consensus using one of three available methods (simple average, weighted average, or iterative reasoning)
+3. Calculates consensus using iterative reasoning (two-round analysis with peer feedback)
 4. Stores results with full context for future reference
 
-### Consensus Methods
-
-Openbet supports three different consensus calculation methods to combine multiple LLM predictions:
-
-#### 1. Simple Average (Default)
-
-Calculates the arithmetic mean of confidence scores from all providers.
-
-```bash
-python -m openbet.cli analyze --market-id KXMARKET-ID --consensus-method simple_average
-```
-
-**When to use**: Fast, straightforward analysis. Good for quick decisions and high-frequency analysis.
-
-**Performance**:
-- Latency: ~5-10 seconds (1 round of LLM calls)
-- Cost: Standard (4 provider calls)
-
-#### 2. Weighted Average
-
-Applies custom weights to each provider based on historical performance or preference.
-
-```bash
-python -m openbet.cli analyze --market-id KXMARKET-ID --consensus-method weighted_average
-```
-
-**When to use**: When you want to trust certain providers more than others based on track record.
-
-**Performance**: Same as simple average (single round)
-
-#### 3. Iterative Reasoning (NEW)
+### Consensus Method: Iterative Reasoning
 
 **Advanced two-round analysis** where LLMs see anonymized peer reasoning and revise their predictions.
 
 ```bash
-python -m openbet.cli analyze --market-id KXMARKET-ID --consensus-method iterative_reasoning
+python -m openbet.cli analyze --market-id KXMARKET-ID
 ```
 
 **How it works**:
@@ -997,17 +966,14 @@ Convergence: Average shift 3.25%, Max shift 5.0%
 
 **Use Cases**:
 ```bash
-# High-stakes bet analysis
-python -m openbet.cli analyze --market-id KXELECTION-28-PRES --consensus-method iterative_reasoning
+# Analyze a specific market
+python -m openbet.cli analyze --market-id KXELECTION-28-PRES
 
-# Compare with simple average
-python -m openbet.cli analyze --market-id KXELECTION-28-PRES --consensus-method simple_average
+# Force fresh analysis (bypass cache)
+python -m openbet.cli analyze --market-id KXMARKET-ID --force
 
-# Force fresh iterative analysis (bypass cache)
-python -m openbet.cli analyze --market-id KXMARKET-ID --consensus-method iterative_reasoning --force
-
-# Iterative reasoning with all markets
-python -m openbet.cli analyze --all --consensus-method iterative_reasoning
+# Analyze all markets
+python -m openbet.cli analyze --all
 ```
 
 **Trading Integration**:
@@ -1015,14 +981,12 @@ python -m openbet.cli analyze --all --consensus-method iterative_reasoning
 Iterative reasoning works seamlessly with the trading algorithm:
 
 ```bash
-# Scan opportunities using iterative reasoning (more accurate signals)
-python -m openbet.cli scan-opportunities --consensus-method iterative_reasoning
+# Scan opportunities using iterative reasoning
+python -m openbet.cli scan-opportunities
 
-# Get trade recommendations with iterative analysis
-python -m openbet.cli recommend-trade KXMARKET-ID --consensus-method iterative_reasoning
+# Get trade recommendations
+python -m openbet.cli recommend-trade KXMARKET-ID
 ```
-
-Note: The `--consensus-method` flag is currently only available for the `analyze` command. Trading commands (`scan-opportunities`, `recommend-trade`) use the analyzer's default method (simple average).
 
 ## Development
 
@@ -1055,11 +1019,9 @@ ruff openbet/
 - ✅ Semi-automated trading with approval workflow
 - ✅ Position monitoring and exit signals
 - ✅ **Iterative reasoning consensus** - Multi-round LLM analysis with peer feedback
-- ✅ Multiple consensus methods (simple average, weighted average, iterative reasoning)
 
 ### Future Enhancements
 - Automated heartbeat monitoring for continuous analysis
-- Consensus method selection in trading commands (`scan-opportunities`, `recommend-trade`)
 - Fully automated mode (no approval required)
 - Advanced backtesting with historical price data
 - Kelly Criterion position sizing

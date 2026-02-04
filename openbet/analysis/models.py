@@ -10,7 +10,7 @@ class ConsensusResult(BaseModel):
 
     yes_confidence: float
     no_confidence: float
-    method: str = "simple_average"
+    method: str = "iterative_reasoning"
     provider_count: int
     provider_responses: Dict[str, Optional[Dict[str, Any]]]
 

@@ -667,24 +667,17 @@ def screen_markets(
 @click.option("--option", help="Specific option to analyze within market")
 @click.option("--force", is_flag=True, help="Force fresh analysis, bypass cache")
 @click.option("--cache-hours", type=int, default=24, help="Cache validity in hours (default: 24)")
-@click.option(
-    "--consensus-method",
-    type=click.Choice(["simple_average", "weighted_average", "iterative_reasoning"]),
-    default="simple_average",
-    help="Consensus calculation method (default: simple_average)"
-)
 def analyze(
     market_id: Optional[str],
     analyze_all: bool,
     option: Optional[str],
     force: bool,
     cache_hours: int,
-    consensus_method: str,
 ):
     """Run LLM analysis on market(s) and store results.
 
     Calls multiple LLM providers (Claude, OpenAI, Grok, Gemini) to analyze market options
-    and calculates consensus confidence scores.
+    using iterative reasoning consensus (two-round analysis with peer feedback).
 
     By default, returns cached analysis if less than 24 hours old.
     Use --force to bypass cache and run fresh analysis.
@@ -693,7 +686,7 @@ def analyze(
         # Import here to avoid circular dependencies
         from openbet.analysis.analyzer import Analyzer
 
-        analyzer = Analyzer(consensus_method=consensus_method)
+        analyzer = Analyzer()
 
         if not market_id and not analyze_all:
             console.print("[red]✗ Must specify either --market-id or --all[/red]")
@@ -1229,20 +1222,18 @@ def scan_opportunities(market_id: Optional[str], threshold: float, limit: int, f
 
 @cli.command("recommend-trade")
 @click.argument("market_id")
-@click.option("--auto-approve", is_flag=True, help="Skip confirmation prompt")
 @click.option("--quantity", type=int, help="Override recommended quantity")
 @click.option("--price", type=float, help="Override recommended price")
 @click.option("--force", is_flag=True, help="Force fresh analysis, bypass cache")
 @click.option("--cache-hours", type=int, default=24, help="Cache validity in hours (default: 24)")
 def recommend_trade(
     market_id: str,
-    auto_approve: bool,
     quantity: Optional[int],
     price: Optional[float],
     force: bool,
     cache_hours: int,
 ):
-    """Analyze market and recommend trade with approval."""
+    """Analyze market and display trade recommendations for manual execution."""
     from openbet.trading.strategy import TradingStrategy
 
     try:
@@ -1329,39 +1320,19 @@ def recommend_trade(
 
         if not signal.passed_filters:
             console.print("\n[red]✗ Signal did not pass risk filters[/red]")
-            if not click.confirm("\nProceed anyway?"):
-                console.print("[yellow]Trade cancelled[/yellow]")
-                return
 
-        # Confirm with user
-        if not auto_approve:
-            console.print()
-            if not click.confirm("Proceed with trade?"):
-                console.print("[yellow]Trade cancelled[/yellow]")
-                # Record rejection
-                strategy.execute_signal(signal, user_approved=False, user_notes="User rejected")
-                return
-
-        # Execute trade
-        console.print("\n[bold]Executing trade...[/bold]")
-
-        decision = strategy.execute_signal(
-            signal=signal,
-            user_approved=True,
-            custom_quantity=quantity,
-            custom_price=price,
-        )
-
-        if decision.executed:
-            console.print("[green]✓ Trade executed successfully![/green]")
-            console.print(f"Order ID: {decision.order_id}")
-            console.print(f"Quantity: {decision.actual_quantity}")
-            console.print(f"Price: ${decision.actual_price:.2f}")
-            console.print(f"Cost: ${decision.execution_cost:.2f}")
-        else:
-            console.print(f"[red]✗ Trade execution failed[/red]")
-            if decision.user_notes:
-                console.print(f"[dim]{decision.user_notes}[/dim]")
+        # Display manual trading instructions
+        console.print("\n[bold green]═══════════════════════════════════════════════════════[/bold green]")
+        console.print("[bold green]MANUAL TRADE RECOMMENDATION[/bold green]")
+        console.print("[bold green]═══════════════════════════════════════════════════════[/bold green]")
+        console.print(f"\n[bold cyan]Market:[/bold cyan] {signal.market_id}")
+        console.print(f"[bold cyan]Action:[/bold cyan] {signal.recommended_action.upper()}")
+        console.print(f"[bold cyan]Side:[/bold cyan] {signal.selected_side.upper() if signal.selected_side else 'N/A'}")
+        console.print(f"[bold cyan]Quantity:[/bold cyan] {quantity or signal.recommended_quantity} contracts")
+        console.print(f"[bold cyan]Price:[/bold cyan] ${price or signal.recommended_price:.2f}")
+        console.print(f"[bold cyan]Total Cost:[/bold cyan] ${(quantity or signal.recommended_quantity) * (price or signal.recommended_price):.2f}")
+        console.print("\n[dim]Navigate to Kalshi platform and manually place this trade[/dim]")
+        console.print("[bold green]═══════════════════════════════════════════════════════[/bold green]")
 
     except Exception as e:
         console.print(f"[red]✗ Error: {str(e)}[/red]")
