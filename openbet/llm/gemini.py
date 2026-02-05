@@ -104,3 +104,56 @@ class GeminiProvider(BaseLLMProvider):
             raise Exception(f"Missing required field in Gemini response: {str(e)}")
         except Exception as e:
             raise Exception(f"Gemini API error: {str(e)}")
+
+    async def analyze_custom_prompt(self, prompt: str) -> str:
+        """Analyze with custom prompt, return raw text response.
+
+        Args:
+            prompt: Custom prompt string
+
+        Returns:
+            Raw response text from Gemini
+
+        Raises:
+            Exception: If API call fails
+        """
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt
+            )
+
+            # Check if response was blocked by safety filters
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                if hasattr(response.prompt_feedback, 'block_reason'):
+                    raise Exception(f"Gemini blocked response: {response.prompt_feedback.block_reason}")
+
+            # Check if we have candidates
+            if not hasattr(response, 'candidates') or not response.candidates:
+                raise Exception(f"Gemini returned no candidates")
+
+            # Check if first candidate was blocked
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'finish_reason') and 'SAFETY' in str(candidate.finish_reason):
+                raise Exception(f"Gemini candidate blocked: {candidate.finish_reason}")
+
+            # Extract and return raw response text
+            response_text = response.text
+
+            if not response_text or not response_text.strip():
+                raise Exception(f"Gemini returned empty response")
+
+            # Try to extract JSON from markdown code blocks if present
+            if "```json" in response_text:
+                json_start = response_text.find("```json") + 7
+                json_end = response_text.find("```", json_start)
+                return response_text[json_start:json_end].strip()
+            elif "```" in response_text:
+                json_start = response_text.find("```") + 3
+                json_end = response_text.find("```", json_start)
+                return response_text[json_start:json_end].strip()
+
+            return response_text
+
+        except Exception as e:
+            raise Exception(f"Gemini API error: {str(e)}")

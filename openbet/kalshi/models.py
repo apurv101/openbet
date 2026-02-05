@@ -143,3 +143,43 @@ class OrderRequest(BaseModel):
     type: str = "limit"
     yes_price: Optional[int] = None  # in cents
     no_price: Optional[int] = None  # in cents
+
+
+class Event(BaseModel):
+    """Kalshi event details."""
+
+    event_ticker: str = Field(..., alias="event_ticker")
+    title: str
+    category: Optional[str] = None
+    series_ticker: Optional[str] = None
+    sub_title: Optional[str] = None
+    mutually_exclusive: Optional[bool] = None
+    status: Optional[str] = None
+    strike_date: Optional[datetime] = None
+
+    class Config:
+        populate_by_name = True
+
+
+class GetEventsResponse(BaseModel):
+    """Response from GET /events endpoint with pagination."""
+
+    events: List[Event]
+    cursor: Optional[str] = None
+
+    @property
+    def has_more_pages(self) -> bool:
+        """Check if there are more pages to fetch."""
+        return bool(self.cursor)
+
+
+class GetMarketsResponse(BaseModel):
+    """Response from GET /markets endpoint with pagination."""
+
+    markets: List[Market]
+    cursor: Optional[str] = None
+
+    @property
+    def has_more_pages(self) -> bool:
+        """Check if there are more pages to fetch."""
+        return bool(self.cursor)

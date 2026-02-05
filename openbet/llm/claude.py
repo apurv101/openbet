@@ -77,3 +77,40 @@ class ClaudeProvider(BaseLLMProvider):
             raise Exception(f"Missing required field in Claude response: {str(e)}")
         except Exception as e:
             raise Exception(f"Claude API error: {str(e)}")
+
+    async def analyze_custom_prompt(self, prompt: str) -> str:
+        """Analyze with custom prompt, return raw text response.
+
+        Args:
+            prompt: Custom prompt string
+
+        Returns:
+            Raw response text from Claude
+
+        Raises:
+            Exception: If API call fails
+        """
+        try:
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=2048,
+                messages=[{"role": "user", "content": prompt}],
+            )
+
+            # Extract and return raw response text
+            response_text = response.content[0].text
+
+            # Try to extract JSON from markdown code blocks if present
+            if "```json" in response_text:
+                json_start = response_text.find("```json") + 7
+                json_end = response_text.find("```", json_start)
+                return response_text[json_start:json_end].strip()
+            elif "```" in response_text:
+                json_start = response_text.find("```") + 3
+                json_end = response_text.find("```", json_start)
+                return response_text[json_start:json_end].strip()
+
+            return response_text
+
+        except Exception as e:
+            raise Exception(f"Claude API error: {str(e)}")

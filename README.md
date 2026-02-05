@@ -12,6 +12,8 @@ Openbet is a Python CLI application that helps analyze betting markets on Kalshi
 - **Market Tracking**: Add and monitor Kalshi markets in a local SQLite database
 - **Multi-LLM Analysis**: Get betting insights from Claude, OpenAI, Grok, and Gemini simultaneously
 - **Consensus Scoring**: Combine multiple LLM opinions into actionable confidence scores
+- **Fast Dependency Screening**: Quickly screen 500+ event pairs in 10-20 minutes to find dependencies (10x faster than full analysis)
+- **Dependency Detection**: AI-powered detection of causal relationships, correlations, and mutual exclusions between events
 - **Automated Betting**: Place bets based on stored analysis results
 - **Full Context**: Analysis includes market details, prices, positions, history, and metrics
 
@@ -403,6 +405,137 @@ python -m openbet.cli analyze-series kxtrumpmeet-26feb
 - Quickly analyze an entire event series at once
 - Refresh analysis for all markets in a series with `--force`
 - Discover and analyze new markets without manual add-market commands
+
+### Dependency Detection & Fast Screening
+
+Detect logical dependencies between events to identify arbitrage opportunities. Openbet uses AI-powered consensus to determine if events are causally related, correlated, or mutually exclusive.
+
+#### Quick Start: Fast Screening (Recommended)
+
+Fast screening mode uses a single LLM provider (Grok) to quickly screen hundreds of event pairs in minutes:
+
+```bash
+# Fetch events from Kalshi
+openbet get-events --save --status=open --category=Politics
+
+# Fast screen 500 pairs (10-20 min vs 4-8 hours for full analysis)
+openbet screen-dependencies --category Politics --limit 500
+
+# Review screening results (shows 🚀 Fast or 🔍 Full mode indicators)
+openbet list-dependencies
+```
+
+#### Fast Screening Options
+
+```bash
+# Basic fast screening
+openbet screen-dependencies --category Politics --limit 500
+
+# Aggressive screening with lower threshold (finds more candidates)
+openbet screen-dependencies --limit 1000 --threshold 0.2
+
+# Conservative screening with higher threshold (fewer false positives)
+openbet screen-dependencies --limit 200 --threshold 0.5
+
+# Skip already analyzed pairs for efficiency
+openbet screen-dependencies --limit 500 --skip-existing
+
+# Adjust parallel processing (default: 10 concurrent pairs)
+openbet screen-dependencies --limit 500 --parallel 20
+```
+
+**Fast Screening Flags:**
+
+| Flag/Option | Description | Default |
+|------------|-------------|---------|
+| `--category <name>` | Limit to events in specific category | All categories |
+| `--limit <num>` | Maximum pairs to screen | 500 |
+| `--threshold <0.0-1.0>` | Minimum score to save | 0.3 |
+| `--parallel <num>` | Number of parallel screening tasks | 10 |
+| `--skip-existing` | Skip already analyzed pairs | False |
+
+#### Full Consensus Analysis (Traditional)
+
+For high-confidence dependency detection with complete audit trail:
+
+```bash
+# Full 4-provider consensus analysis (slower but more accurate)
+openbet detect-dependencies --category Politics --limit 50
+
+# Analyze all event pairs (very slow, comprehensive)
+openbet detect-dependencies --all-pairs --limit 100
+```
+
+#### Viewing Dependencies
+
+```bash
+# List all detected dependencies
+openbet list-dependencies
+
+# Show only unverified dependencies (need human review)
+openbet list-dependencies --unverified-only
+```
+
+The list shows mode indicators:
+- 🚀 **Fast** - Quick screening result (1 provider, 1 round)
+- 🔍 **Full** - Complete consensus analysis (4 providers, 2 rounds)
+
+#### Verifying Dependencies
+
+Dependencies require human verification before use in arbitrage detection:
+
+```bash
+# Interactive verification
+openbet verify-dependency <ID>
+
+# Approve with notes
+openbet verify-dependency 5 --approve --notes="Clear causal relationship"
+
+# Reject with reason
+openbet verify-dependency 5 --reject --notes="Events are independent"
+```
+
+#### Performance Comparison
+
+| Metric | Fast Screening | Full Analysis |
+|--------|----------------|---------------|
+| **Pairs analyzed** | 500 pairs | 50 pairs |
+| **Time** | 10-20 minutes | 50-100 minutes |
+| **LLM calls** | 1 per pair | 8 per pair |
+| **Cost per pair** | ~$0.001-0.002 | ~$0.04-0.10 |
+| **Use case** | Discovery, exploration | Verification, trading |
+
+#### Recommended Workflow
+
+**Discovery Mode (Fast → Full):**
+```bash
+# 1. Fast screen to find candidates
+openbet screen-dependencies --category Politics --limit 500 --threshold 0.3
+
+# 2. Review results
+openbet list-dependencies
+
+# 3. Run full analysis on high-score pairs (manual selection)
+openbet detect-dependencies --category Politics --limit 20
+
+# 4. Verify before trading
+openbet verify-dependency <ID> --approve
+```
+
+**Conservative Mode (Full Only):**
+```bash
+# Traditional comprehensive analysis
+openbet detect-dependencies --category Politics --limit 50
+openbet list-dependencies
+openbet verify-dependency <ID>
+```
+
+**When to Use Each Mode:**
+
+- **Fast Screening**: Exploring new categories, budget-conscious, time-sensitive, screening 100+ pairs
+- **Full Analysis**: High-confidence needed, preparing for trading, deep constraint analysis, <20 pairs
+
+For detailed documentation, see [AI_DEPENDENCY_DETECTION.md](AI_DEPENDENCY_DETECTION.md).
 
 ### Place a Bet
 Execute a bet based on stored analysis:

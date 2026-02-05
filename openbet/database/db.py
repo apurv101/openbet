@@ -40,6 +40,17 @@ class Database:
             cursor.execute(sql)
         self.conn.commit()
 
+        # Migration: Add analysis_mode column if it doesn't exist
+        cursor.execute(
+            "SELECT COUNT(*) FROM pragma_table_info('event_dependencies') "
+            "WHERE name='analysis_mode'"
+        )
+        if cursor.fetchone()[0] == 0:
+            cursor.execute(
+                "ALTER TABLE event_dependencies ADD COLUMN analysis_mode TEXT DEFAULT 'full_analysis'"
+            )
+            self.conn.commit()
+
     def close(self) -> None:
         """Close database connection."""
         if self._conn is not None:

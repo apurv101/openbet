@@ -82,3 +82,40 @@ class GrokProvider(BaseLLMProvider):
             raise Exception(f"Missing required field in Grok response: {str(e)}")
         except Exception as e:
             raise Exception(f"Grok API error: {str(e)}")
+
+    async def analyze_custom_prompt(self, prompt: str) -> str:
+        """Analyze with custom prompt, return raw text response.
+
+        Args:
+            prompt: Custom prompt string
+
+        Returns:
+            Raw response text from Grok
+
+        Raises:
+            Exception: If API call fails
+        """
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2048,
+            )
+
+            # Extract and return raw response text
+            response_text = response.choices[0].message.content
+
+            # Try to extract JSON from markdown code blocks if present
+            if "```json" in response_text:
+                json_start = response_text.find("```json") + 7
+                json_end = response_text.find("```", json_start)
+                return response_text[json_start:json_end].strip()
+            elif "```" in response_text:
+                json_start = response_text.find("```") + 3
+                json_end = response_text.find("```", json_start)
+                return response_text[json_start:json_end].strip()
+
+            return response_text
+
+        except Exception as e:
+            raise Exception(f"Grok API error: {str(e)}")

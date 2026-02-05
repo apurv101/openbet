@@ -19,7 +19,16 @@ from openbet.kalshi.exceptions import (
     KalshiOrderError,
     KalshiRateLimitError,
 )
-from openbet.kalshi.models import Market, Order, OrderRequest, Orderbook, Position
+from openbet.kalshi.models import (
+    Event,
+    GetEventsResponse,
+    GetMarketsResponse,
+    Market,
+    Order,
+    OrderRequest,
+    Orderbook,
+    Position,
+)
 
 
 class KalshiClient:
@@ -382,3 +391,161 @@ class KalshiClient:
             self._make_request("DELETE", f"/portfolio/orders/{order_id}")
         except KalshiAPIError as e:
             raise KalshiOrderError(f"Order cancellation failed: {str(e)}")
+
+    def get_events(
+        self,
+        limit: int = 200,
+        cursor: Optional[str] = None,
+        status: Optional[str] = None,
+        series_ticker: Optional[str] = None,
+        with_nested_markets: bool = False,
+    ) -> List[Event]:
+        """Get list of events with optional filters.
+
+        Endpoint: GET /events
+        Docs: https://docs.kalshi.com/typescript-sdk/api/EventsApi#getevents
+
+        Args:
+            limit: Number of events to return (max 200)
+            cursor: Pagination cursor
+            status: Filter by status (e.g., "open", "closed")
+            series_ticker: Filter by series ticker
+            with_nested_markets: Include nested market data
+
+        Returns:
+            List of Event objects
+
+        Rate limiting: Conservative approach with 0.5s delay
+        """
+        params = {"limit": min(limit, 200)}  # API max is 200
+        if cursor:
+            params["cursor"] = cursor
+        if status:
+            params["status"] = status
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if with_nested_markets:
+            params["with_nested_markets"] = "true"
+
+        # Conservative rate limiting: add 0.5s delay between calls
+        time.sleep(0.5)
+
+        data = self._make_request("GET", "/events", params=params)
+        events_data = data.get("events", [])
+        return [Event(**event) for event in events_data]
+
+    def get_events_with_cursor(
+        self,
+        limit: int = 200,
+        cursor: Optional[str] = None,
+        status: Optional[str] = None,
+        series_ticker: Optional[str] = None,
+        with_nested_markets: bool = False,
+    ) -> GetEventsResponse:
+        """Get list of events with cursor for pagination.
+
+        Args:
+            limit: Number of events to return (max 200)
+            cursor: Pagination cursor from previous response
+            status: Filter by status (valid: unopened, open, closed, settled)
+            series_ticker: Filter by series ticker
+            with_nested_markets: Include nested market data
+
+        Returns:
+            GetEventsResponse with events and cursor
+
+        Raises:
+            ValueError: If status parameter is invalid
+        """
+        # Validate status parameter
+        valid_statuses = {"unopened", "open", "closed", "settled"}
+        if status and status not in valid_statuses:
+            raise ValueError(
+                f"Invalid status '{status}'. Must be one of: {', '.join(sorted(valid_statuses))}"
+            )
+
+        params = {"limit": min(limit, 200)}
+        if cursor:
+            params["cursor"] = cursor
+        if status:
+            params["status"] = status
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if with_nested_markets:
+            params["with_nested_markets"] = "true"
+
+        time.sleep(0.5)  # Conservative rate limiting
+
+        data = self._make_request("GET", "/events", params=params)
+
+        # Extract cursor from response
+        cursor_value = data.get("cursor")
+        if cursor_value == "":  # Empty string means no more pages
+            cursor_value = None
+
+        return GetEventsResponse(
+            events=[Event(**event) for event in data.get("events", [])],
+            cursor=cursor_value
+        )
+
+    def get_markets_with_cursor(
+        self,
+        limit: int = 100,
+        cursor: Optional[str] = None,
+        status: Optional[str] = None,
+        series_ticker: Optional[str] = None,
+    ) -> GetMarketsResponse:
+        """Get list of markets with cursor for pagination.
+
+        Args:
+            limit: Number of markets to return (max 200)
+            cursor: Pagination cursor from previous response
+            status: Filter by status (valid: unopened, open, closed, settled)
+            series_ticker: Filter by series ticker
+
+        Returns:
+            GetMarketsResponse with markets and cursor
+
+        Raises:
+            ValueError: If status parameter is invalid
+        """
+        valid_statuses = {"unopened", "open", "closed", "settled"}
+        if status and status not in valid_statuses:
+            raise ValueError(
+                f"Invalid status '{status}'. Must be one of: {', '.join(sorted(valid_statuses))}"
+            )
+
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if status:
+            params["status"] = status
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+
+        data = self._make_request("GET", "/markets", params=params)
+
+        cursor_value = data.get("cursor")
+        if cursor_value == "":
+            cursor_value = None
+
+        return GetMarketsResponse(
+            markets=[Market(**market) for market in data.get("markets", [])],
+            cursor=cursor_value
+        )
+
+    def get_event(self, event_ticker: str) -> Event:
+        """Get single event details.
+
+        Args:
+            event_ticker: Event ticker to fetch
+
+        Returns:
+            Event object with details
+
+        Rate limiting: Conservative 0.3s delay
+        """
+        time.sleep(0.3)  # Conservative rate limiting
+        data = self._make_request("GET", f"/events/{event_ticker}")
+        event_data = data.get("event", data)
+        return Event(**event_data)

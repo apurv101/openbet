@@ -1530,5 +1530,512 @@ def trading_history(limit: int, signal_type: str, decision: str):
         sys.exit(1)
 
 
+@cli.command("get-events")
+@click.option("--save", is_flag=True, help="Save events to database")
+@click.option("--status", help="Filter by status (unopened, open, closed, settled)")
+@click.option("--category", help="Filter by category")
+@click.option("--series", help="Filter by series ticker")
+def get_events(save: bool, status: Optional[str], category: Optional[str], series: Optional[str]):
+    """Fetch events from Kalshi API and optionally save to database.
+
+    Conservative rate limiting: 0.5s delay between API calls.
+    """
+    from openbet.database.repositories import EventRepository
+
+    try:
+        client = KalshiClient()
+        event_repo = EventRepository()
+
+        console.print("[bold]Fetching events from Kalshi...[/bold]")
+
+        all_events = []
+        cursor = None
+        page = 1
+
+        # Paginate through all results using API cursor
+        while True:
+            console.print(f"[dim]Fetching page {page}...[/dim]")
+
+            try:
+                response = client.get_events_with_cursor(
+                    limit=200,
+                    cursor=cursor,
+                    status=status,
+                    series_ticker=series
+                )
+            except ValueError as e:
+                # Handle invalid status parameter
+                console.print(f"[red]Error:[/red] {e}")
+                console.print("[yellow]Valid status values:[/yellow] unopened, open, closed, settled")
+                sys.exit(1)
+
+            all_events.extend(response.events)
+
+            # Check if there are more pages
+            if not response.has_more_pages:
+                break
+
+            cursor = response.cursor
+            page += 1
+
+        # Filter by category if specified (client-side filtering)
+        if category:
+            all_events = [e for e in all_events if e.category == category]
+
+        console.print(f"[green]✓[/green] Fetched {len(all_events)} events")
+
+        # Display in table
+        table = Table(title="Kalshi Events")
+        table.add_column("Event Ticker", style="cyan")
+        table.add_column("Title", style="white")
+        table.add_column("Category", style="yellow")
+        table.add_column("Status", style="green")
+
+        for event in all_events[:20]:  # Show first 20
+            table.add_row(
+                event.event_ticker,
+                event.title[:50] + "..." if len(event.title) > 50 else event.title,
+                event.category or "N/A",
+                event.status or "N/A"
+            )
+
+        if len(all_events) > 20:
+            console.print(f"\n[dim]... and {len(all_events) - 20} more events[/dim]")
+
+        console.print(table)
+
+        # Save to database if requested
+        if save:
+            console.print("\n[bold]Saving to database...[/bold]")
+            saved_count = 0
+
+            for event in all_events:
+                event_repo.create_or_update(
+                    event_ticker=event.event_ticker,
+                    title=event.title,
+                    category=event.category,
+                    series_ticker=event.series_ticker,
+                    sub_title=event.sub_title,
+                    mutually_exclusive=event.mutually_exclusive,
+                    status=event.status,
+                    strike_date=event.strike_date,
+                    metadata=json.dumps(event.model_dump(mode='json'))
+                )
+                saved_count += 1
+
+            console.print(f"[green]✓[/green] Saved {saved_count} events to database")
+
+    except KalshiError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@cli.command("detect-dependencies")
+@click.option("--all-pairs", is_flag=True, help="Analyze all event pairs (slow)")
+@click.option("--category", help="Limit to events in specific category")
+@click.option("--limit", type=int, default=50, help="Max pairs to analyze")
+def detect_dependencies(all_pairs: bool, category: Optional[str], limit: int):
+    """Detect dependencies between events using AI consensus.
+
+    Conservative mode: Analyzes pairs within same category by default.
+    Use --all-pairs to analyze across categories (much slower).
+    """
+    import asyncio
+    from collections import defaultdict
+
+    from openbet.arbitrage.dependency_detector import DependencyDetector
+    from openbet.database.repositories import EventDependencyRepository, EventRepository
+
+    try:
+        event_repo = EventRepository()
+        dep_repo = EventDependencyRepository()
+
+        # Get events
+        console.print("[bold]Loading events from database...[/bold]")
+        events = event_repo.get_all(category=category)
+
+        if not events:
+            console.print("[yellow]No events found. Run 'openbet get-events --save' first.[/yellow]")
+            return
+
+        console.print(f"Found {len(events)} events")
+
+        # Generate event pairs
+        pairs = []
+
+        if all_pairs:
+            # All pairwise combinations
+            for i, event_a in enumerate(events):
+                for event_b in events[i+1:]:
+                    pairs.append((event_a, event_b))
+        else:
+            # Only same category pairs (more likely to be dependent)
+            by_category = defaultdict(list)
+
+            for event in events:
+                cat = event.get("category", "unknown")
+                by_category[cat].append(event)
+
+            for cat, cat_events in by_category.items():
+                for i, event_a in enumerate(cat_events):
+                    for event_b in cat_events[i+1:]:
+                        pairs.append((event_a, event_b))
+
+        # Limit pairs
+        pairs = pairs[:limit]
+        console.print(f"Analyzing {len(pairs)} event pairs...")
+
+        # Initialize detector
+        detector = DependencyDetector()
+
+        # Analyze each pair
+        detected_count = 0
+
+        with console.status("[bold green]Analyzing dependencies...") as status:
+            for i, (event_a, event_b) in enumerate(pairs):
+                status.update(f"[bold green]Pair {i+1}/{len(pairs)}: {event_a['event_ticker']} × {event_b['event_ticker']}")
+
+                # Check if already analyzed
+                existing = dep_repo.get_by_event_pair(
+                    event_a['event_ticker'],
+                    event_b['event_ticker']
+                )
+                if existing:
+                    console.print(f"[dim]Skipping (already analyzed): {event_a['event_ticker']} × {event_b['event_ticker']}[/dim]")
+                    continue
+
+                # Analyze with AI consensus
+                try:
+                    result = asyncio.run(detector.analyze_dependency(event_a, event_b))
+
+                    # Save to database
+                    dep_repo.create(
+                        event_a_ticker=event_a['event_ticker'],
+                        event_b_ticker=event_b['event_ticker'],
+                        dependency_type=result.dependency_type,
+                        dependency_score=result.dependency_score,
+                        constraints={"constraints": [c.model_dump() for c in result.constraints]},
+                        llm_responses=result.provider_responses,
+                        consensus_method=result.consensus_method,
+                        round_1_responses=result.round_1_responses,
+                        round_2_responses=result.provider_responses,
+                        convergence_metrics=result.convergence_metrics
+                    )
+
+                    if result.is_dependent:
+                        detected_count += 1
+                        console.print(f"[green]✓[/green] Dependency detected: {event_a['event_ticker']} × {event_b['event_ticker']} (score: {result.dependency_score:.2f})")
+
+                except Exception as e:
+                    console.print(f"[red]Error analyzing pair:[/red] {e}")
+
+        console.print(f"\n[bold green]✓[/bold green] Analysis complete!")
+        console.print(f"Dependencies detected: {detected_count}/{len(pairs)}")
+        console.print(f"\nNext: Review with [cyan]openbet list-dependencies[/cyan]")
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+@cli.command("screen-dependencies")
+@click.option("--category", help="Limit to events in specific category")
+@click.option("--limit", type=int, default=500, help="Max pairs to screen")
+@click.option("--threshold", type=float, default=0.3, help="Min score to save (0.0-1.0)")
+@click.option("--parallel", type=int, default=10, help="Parallel screening tasks")
+@click.option("--skip-existing", is_flag=True, help="Skip already analyzed pairs")
+def screen_dependencies(
+    category: Optional[str], limit: int, threshold: float, parallel: int, skip_existing: bool
+):
+    """Fast dependency screening using Grok with titles only.
+
+    Screens many pairs quickly (10-20 min for 500 pairs) to find likely
+    dependent events. Much faster than full consensus analysis.
+
+    Results with score >= threshold are saved for review.
+
+    Examples:
+        # Screen 500 Politics pairs, save candidates with score >= 0.3
+        openbet screen-dependencies --category Politics --limit 500
+
+        # Aggressive screening with lower threshold
+        openbet screen-dependencies --limit 1000 --threshold 0.2
+
+        # Conservative screening with higher threshold
+        openbet screen-dependencies --limit 200 --threshold 0.5
+    """
+    import asyncio
+    from collections import defaultdict
+    from datetime import datetime
+    from itertools import combinations
+
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+
+    from openbet.arbitrage.dependency_detector import DependencyDetector
+    from openbet.database.repositories import EventDependencyRepository, EventRepository
+
+    try:
+        detector = DependencyDetector()
+        event_repo = EventRepository()
+        dep_repo = EventDependencyRepository()
+
+        # Load events
+        console.print("[bold]Loading events from database...[/bold]")
+        events = event_repo.get_all(category=category)
+
+        if not events:
+            console.print(
+                "[yellow]No events found. Run 'openbet get-events --save' first.[/yellow]"
+            )
+            return
+
+        console.print(f"Found {len(events)} events")
+
+        # Generate pairs (same category only for efficiency)
+        by_category = defaultdict(list)
+        for event in events:
+            cat = event.get("category", "unknown")
+            by_category[cat].append(event)
+
+        pairs = []
+        for cat, cat_events in by_category.items():
+            pairs.extend(list(combinations(cat_events, 2)))
+
+        console.print(f"Generated {len(pairs)} possible pairs")
+
+        # Limit pairs
+        if len(pairs) > limit:
+            pairs = pairs[:limit]
+            console.print(f"Limited to {limit} pairs for analysis")
+
+        # Filter out existing pairs if requested
+        if skip_existing:
+            event_pairs = [
+                (e1["event_ticker"], e2["event_ticker"]) for e1, e2 in pairs
+            ]
+            existing = dep_repo.check_pairs_exist(event_pairs)
+            pairs = [pair for pair, exists in zip(pairs, existing.values()) if not exists]
+            console.print(
+                f"Skipped {sum(existing.values())} existing pairs, {len(pairs)} remaining"
+            )
+
+        if not pairs:
+            console.print("[yellow]No pairs to analyze[/yellow]")
+            return
+
+        # Process in parallel batches
+        async def screen_batch(batch):
+            """Screen a batch of pairs in parallel."""
+            tasks = [
+                detector.screen_dependency_fast(event_a, event_b)
+                for event_a, event_b in batch
+            ]
+            return await asyncio.gather(*tasks, return_exceptions=True)
+
+        results = []
+        saved_count = 0
+        error_count = 0
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        ) as progress:
+            task = progress.add_task("Screening pairs...", total=len(pairs))
+
+            # Process in batches
+            for i in range(0, len(pairs), parallel):
+                batch = pairs[i : i + parallel]
+                batch_results = asyncio.run(screen_batch(batch))
+
+                # Save results above threshold
+                for (event_a, event_b), result in zip(batch, batch_results):
+                    if isinstance(result, Exception):
+                        error_count += 1
+                        continue
+
+                    results.append(
+                        {
+                            "event_a": event_a["event_ticker"],
+                            "event_b": event_b["event_ticker"],
+                            "score": result.dependency_score,
+                            "dependent": result.is_dependent,
+                        }
+                    )
+
+                    # Save to database if above threshold
+                    if result.dependency_score >= threshold:
+                        dep_repo.create(
+                            event_a_ticker=event_a["event_ticker"],
+                            event_b_ticker=event_b["event_ticker"],
+                            dependency_type=result.dependency_type,
+                            dependency_score=result.dependency_score,
+                            constraints={},
+                            llm_responses={"grok": result.model_dump()},
+                            consensus_method="fast_screening",
+                            round_1_responses={"grok": result.model_dump()},
+                            round_2_responses={},
+                            convergence_metrics={},
+                            analysis_mode="fast_screening",
+                        )
+                        saved_count += 1
+
+                progress.advance(task, len(batch))
+
+        # Display summary
+        console.print(f"\n[bold green]Screening Complete[/bold green]")
+        console.print(f"Analyzed: {len(results)} pairs")
+        console.print(f"Saved: {saved_count} pairs (score >= {threshold})")
+        console.print(f"Errors: {error_count} pairs")
+
+        # Show top candidates
+        if saved_count > 0:
+            sorted_results = sorted(
+                [r for r in results if r["score"] >= threshold],
+                key=lambda x: x["score"],
+                reverse=True,
+            )[:10]
+
+            console.print(f"\n[bold]Top Candidates:[/bold]")
+            for r in sorted_results:
+                console.print(
+                    f"  {r['event_a']} × {r['event_b']}: {r['score']:.2f}"
+                )
+
+            console.print(
+                f"\nRun [cyan]openbet list-dependencies[/cyan] to review all results"
+            )
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        import traceback
+
+        traceback.print_exc()
+        sys.exit(1)
+
+
+@cli.command("list-dependencies")
+@click.option("--unverified-only", is_flag=True, help="Show only unverified dependencies")
+def list_dependencies(unverified_only: bool):
+    """List detected dependencies."""
+    from openbet.database.repositories import EventDependencyRepository
+
+    try:
+        dep_repo = EventDependencyRepository()
+
+        if unverified_only:
+            deps = dep_repo.get_all_unverified()
+            title = "Unverified Dependencies (Need Human Review)"
+        else:
+            # Get all dependencies
+            deps = dep_repo.get_all()
+            title = "All Dependencies"
+
+        if not deps:
+            console.print("[yellow]No dependencies found.[/yellow]")
+            return
+
+        table = Table(title=title)
+        table.add_column("ID", style="cyan")
+        table.add_column("Event A", style="white")
+        table.add_column("Event B", style="white")
+        table.add_column("Score", style="yellow")
+        table.add_column("Type", style="green")
+        table.add_column("Mode", style="blue")
+        table.add_column("Verified", style="magenta")
+
+        for dep in deps:
+            verified = "✓" if dep["human_verified"] else "⏳"
+            mode = dep.get("analysis_mode", "full_analysis")
+            mode_display = "🚀 Fast" if mode == "fast_screening" else "🔍 Full"
+            table.add_row(
+                str(dep["id"]),
+                dep["event_a_ticker"],
+                dep["event_b_ticker"],
+                f"{dep['dependency_score']:.2f}",
+                dep["dependency_type"],
+                mode_display,
+                verified
+            )
+
+        console.print(table)
+        console.print(f"\nTotal: {len(deps)} dependencies")
+
+        if unverified_only:
+            console.print(f"\nVerify with: [cyan]openbet verify-dependency <ID> --approve[/cyan]")
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@cli.command("verify-dependency")
+@click.argument("dependency_id", type=int)
+@click.option("--approve", is_flag=True, help="Approve this dependency")
+@click.option("--reject", is_flag=True, help="Reject this dependency")
+@click.option("--notes", help="Verification notes")
+def verify_dependency(dependency_id: int, approve: bool, reject: bool, notes: Optional[str]):
+    """Verify AI-detected dependency (81.45% accuracy, needs human review)."""
+    from openbet.database.repositories import EventDependencyRepository, EventRepository
+
+    try:
+        dep_repo = EventDependencyRepository()
+        event_repo = EventRepository()
+
+        # Get dependency
+        dep = dep_repo.get(dependency_id)
+        if not dep:
+            console.print(f"[red]Dependency {dependency_id} not found[/red]")
+            return
+
+        # Get event details
+        event_a = event_repo.get(dep["event_a_ticker"])
+        event_b = event_repo.get(dep["event_b_ticker"])
+
+        # Display details
+        console.print(f"\n[bold]Dependency #{dependency_id}[/bold]")
+        console.print(f"\n[cyan]Event A:[/cyan] {event_a['title']}")
+        console.print(f"[cyan]Event B:[/cyan] {event_b['title']}")
+        console.print(f"\n[yellow]Dependency Score:[/yellow] {dep['dependency_score']:.2f}")
+        console.print(f"[yellow]Type:[/yellow] {dep['dependency_type']}")
+
+        # Show constraints
+        constraints_data = json.loads(dep["constraints_json"])
+        console.print(f"\n[bold]Detected Constraints:[/bold]")
+        for i, c in enumerate(constraints_data.get("constraints", []), 1):
+            console.print(f"  {i}. [{c['constraint_type']}] {c['description']} (confidence: {c['confidence']:.2f})")
+
+        # Show LLM responses
+        console.print(f"\n[bold]Provider Consensus:[/bold]")
+        llm_responses = json.loads(dep["llm_responses_json"])
+        for provider, response in llm_responses.items():
+            console.print(f"  • {provider}: {response['dependency_type']} (score: {response['dependency_score']:.2f})")
+
+        # Verification action
+        if approve:
+            dep_repo.mark_verified(dependency_id, verified=True, notes=notes)
+            console.print(f"\n[green]✓ Dependency approved[/green]")
+        elif reject:
+            dep_repo.mark_verified(dependency_id, verified=False, notes=notes)
+            console.print(f"\n[red]✗ Dependency rejected[/red]")
+        else:
+            # Interactive prompt
+            if click.confirm("\nApprove this dependency?"):
+                notes = click.prompt("Verification notes (optional)", default="", show_default=False)
+                dep_repo.mark_verified(dependency_id, verified=True, notes=notes or None)
+                console.print(f"[green]✓ Dependency approved[/green]")
+            else:
+                notes = click.prompt("Rejection reason (optional)", default="", show_default=False)
+                dep_repo.mark_verified(dependency_id, verified=False, notes=notes or None)
+                console.print(f"[red]✗ Dependency rejected[/red]")
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     cli()

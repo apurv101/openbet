@@ -34,6 +34,24 @@ class BaseLLMProvider(ABC):
         """
         pass
 
+    @abstractmethod
+    async def analyze_custom_prompt(self, prompt: str) -> str:
+        """Analyze with custom prompt, return raw text response.
+
+        Used for dependency detection and other custom analyses.
+        Provider should return raw text output (typically JSON).
+
+        Args:
+            prompt: Custom prompt string
+
+        Returns:
+            Raw response text from the LLM
+
+        Raises:
+            Exception: If analysis fails
+        """
+        pass
+
     def _build_analysis_prompt(self, context: MarketContext) -> str:
         """Build prompt for market analysis.
 

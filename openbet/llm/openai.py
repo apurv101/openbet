@@ -77,3 +77,40 @@ class OpenAIProvider(BaseLLMProvider):
             raise Exception(f"Missing required field in OpenAI response: {str(e)}")
         except Exception as e:
             raise Exception(f"OpenAI API error: {str(e)}")
+
+    async def analyze_custom_prompt(self, prompt: str) -> str:
+        """Analyze with custom prompt, return raw text response.
+
+        Args:
+            prompt: Custom prompt string
+
+        Returns:
+            Raw response text from OpenAI
+
+        Raises:
+            Exception: If API call fails
+        """
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                max_completion_tokens=2048,
+            )
+
+            # Extract response text
+            message = response.choices[0].message
+
+            # Check for refusal
+            if hasattr(message, 'refusal') and message.refusal:
+                raise Exception(f"OpenAI refused to respond: {message.refusal}")
+
+            response_text = message.content
+
+            if not response_text:
+                raise Exception(f"OpenAI returned empty response")
+
+            return response_text
+
+        except Exception as e:
+            raise Exception(f"OpenAI API error: {str(e)}")
